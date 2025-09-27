@@ -117,20 +117,36 @@ const AMD_GPU_DEVICE_IDS: &[u16] = &[
 
 /// Detect AMD GPU through PCI scanning
 pub fn detect_amd_gpu() -> Result<GPUCapabilities, &'static str> {
-    // Simulate PCI scanning for AMD GPUs
-    // In a real implementation, this would scan the PCI bus for vendor ID 0x1002
-    
-    // For demonstration, we'll detect a common RX GPU
+    // Legacy function for backward compatibility
     let device_id = 0x73DF; // Radeon RX 6700 XT
+    create_amd_gpu_capabilities(device_id)
+}
+
+/// Detect AMD GPU from PCI device information
+pub fn detect_amd_gpu_from_pci(pci_device: crate::gpu::PCIDevice) -> Result<GPUCapabilities, &'static str> {
+    // Verify this is actually an AMD device
+    if pci_device.vendor_id != 0x1002 {
+        return Err("Not an AMD device");
+    }
     
-    // Check if this is a known AMD GPU
-    let is_amd_gpu = AMD_GPU_DEVICE_IDS.contains(&device_id) || 
-                     is_amd_device_id(device_id);
+    // Verify this is a display controller
+    if pci_device.class_code != 0x03 {
+        return Err("Not a display controller");
+    }
+    
+    // Check if this is a known AMD GPU device ID
+    let is_amd_gpu = AMD_GPU_DEVICE_IDS.contains(&pci_device.device_id) || 
+                     is_amd_device_id(pci_device.device_id);
 
     if !is_amd_gpu {
-        return Err("No AMD GPU detected");
+        return Err("Unknown AMD GPU device ID");
     }
 
+    create_amd_gpu_capabilities(pci_device.device_id)
+}
+
+/// Create GPU capabilities structure for AMD GPU
+fn create_amd_gpu_capabilities(device_id: u16) -> Result<GPUCapabilities, &'static str> {
     let memory_size = estimate_amd_gpu_memory(device_id);
     let max_resolution = get_amd_max_resolution(device_id);
     let (supports_2d, supports_3d, supports_compute) = get_amd_capabilities(device_id);

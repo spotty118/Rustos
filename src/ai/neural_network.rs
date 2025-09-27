@@ -1,4 +1,5 @@
 use heapless::Vec;
+use micromath;
 
 const MAX_LAYERS: usize = 3;
 const MAX_NEURONS_PER_LAYER: usize = 16;
@@ -45,12 +46,53 @@ impl Layer {
                 sum += input[j] * self.weights[i][j];
             }
             
-            // ReLU activation function
-            let activated = if sum > 0.0 { sum } else { 0.0 };
+            // Sigmoid activation function for better gradient flow
+            let activated = 1.0 / (1.0 + micromath::F32Ext::exp(-sum));
             let _ = output.push(activated);
         }
         
         output
+    }
+    
+    /// Compute layer output with activation gradients for backpropagation
+    pub fn forward_with_gradients(&self, input: &[f32]) -> (Vec<f32, MAX_NEURONS_PER_LAYER>, Vec<f32, MAX_NEURONS_PER_LAYER>) {
+        let mut output = Vec::new();
+        let mut gradients = Vec::new();
+        
+        for i in 0..self.neurons {
+            let mut sum = self.biases[i];
+            
+            for j in 0..input.len().min(MAX_NEURONS_PER_LAYER) {
+                sum += input[j] * self.weights[i][j];
+            }
+            
+            // Sigmoid activation
+            let activated = 1.0 / (1.0 + micromath::F32Ext::exp(-sum));
+            // Sigmoid derivative for backpropagation
+            let gradient = activated * (1.0 - activated);
+            
+            let _ = output.push(activated);
+            let _ = gradients.push(gradient);
+        }
+        
+        (output, gradients)
+    }
+    
+    /// Update layer weights using backpropagation
+    pub fn update_weights(&mut self, input: &[f32], error_gradients: &[f32], learning_rate: f32) {
+        for i in 0..self.neurons {
+            if i < error_gradients.len() {
+                let error_grad = error_gradients[i];
+                
+                // Update weights
+                for j in 0..input.len().min(MAX_NEURONS_PER_LAYER) {
+                    self.weights[i][j] += learning_rate * error_grad * input[j];
+                }
+                
+                // Update bias
+                self.biases[i] += learning_rate * error_grad;
+            }
+        }
     }
 }
 
@@ -102,28 +144,119 @@ impl NeuralNetwork {
         current_input
     }
 
-    pub fn train(&mut self, input: &[f32], expected_output: &[f32]) -> Result<(), &'static str> {
-        // Simple training with forward pass only (backward pass would be more complex)
-        let output = self.forward(input);
-        
-        if output.is_empty() || expected_output.is_empty() {
+    pub fn train(&mut self, input: &[f32], expected_output: &[f32]) -> Result<f32, &'static str> {
+        if input.is_empty() || expected_output.is_empty() {
             return Err("Invalid input or output");
         }
         
-        // Calculate error for logging purposes
-        let error = (output[0] - expected_output[0]).abs();
+        // Forward pass storing intermediate values
+        let mut layer_outputs = Vec::<Vec<f32, MAX_NEURONS_PER_LAYER>, MAX_LAYERS>::new();
+        let mut layer_gradients = Vec::<Vec<f32, MAX_NEURONS_PER_LAYER>, MAX_LAYERS>::new();
         
-        if error > 0.1 {
-            // Simple weight adjustment (very basic learning)
-            if let Some(last_layer) = self.layers.last_mut() {
-                for i in 0..last_layer.neurons {
-                    let adjustment = self.learning_rate * (expected_output[0] - output[0]);
-                    last_layer.biases[i] += adjustment;
+        let mut current_input = Vec::new();
+        for &val in input.iter().take(MAX_NEURONS_PER_LAYER) {
+            let _ = current_input.push(val);
+        }
+        
+        // Forward pass through all layers
+        for layer in &self.layers {
+            let (output, gradients) = layer.forward_with_gradients(&current_input);
+            current_input = output.clone();
+            let _ = layer_outputs.push(output);
+            let _ = layer_gradients.push(gradients);
+        }
+        
+        if layer_outputs.is_empty() {
+            return Err("No layer outputs");
+        }
+        
+        // Calculate output error
+        let final_output = &layer_outputs[layer_outputs.len() - 1];
+        if final_output.is_empty() {
+            return Err("Empty final output");
+        }
+        
+        let error = final_output[0] - expected_output[0];
+        let mean_squared_error = error * error;
+        
+        // Backward pass (simplified backpropagation)
+        let mut error_gradients = Vec::<f32, MAX_NEURONS_PER_LAYER>::new();
+        let _ = error_gradients.push(error * layer_gradients[layer_gradients.len() - 1][0]);
+        
+        // Update weights from output to input
+        for layer_idx in (0..self.layers.len()).rev() {
+            let layer_input = if layer_idx == 0 {
+                // First layer uses original input
+                let mut input_vec = Vec::new();
+                for &val in input.iter().take(MAX_NEURONS_PER_LAYER) {
+                    let _ = input_vec.push(val);
                 }
+                input_vec
+            } else {
+                // Other layers use previous layer output
+                layer_outputs[layer_idx - 1].clone()
+            };
+            
+            self.layers[layer_idx].update_weights(&layer_input, &error_gradients, self.learning_rate);
+            
+            // Propagate error to previous layer (simplified)
+            if layer_idx > 0 {
+                let mut new_error_gradients = Vec::new();
+                for i in 0..self.layers[layer_idx - 1].neurons {
+                    let mut error_sum = 0.0;
+                    for j in 0..error_gradients.len() {
+                        error_sum += error_gradients[j] * self.layers[layer_idx].weights[j][i];
+                    }
+                    let _ = new_error_gradients.push(error_sum * layer_gradients[layer_idx - 1][i]);
+                }
+                error_gradients = new_error_gradients;
             }
         }
         
-        Ok(())
+        Ok(mean_squared_error)
+    }
+    
+    /// Train the network with multiple epochs
+    pub fn train_epochs(&mut self, training_data: &[(&[f32], &[f32])], epochs: usize) -> Result<f32, &'static str> {
+        let mut total_error = 0.0;
+        let mut sample_count = 0;
+        
+        for epoch in 0..epochs {
+            let mut epoch_error = 0.0;
+            
+            for (input, expected) in training_data {
+                match self.train(input, expected) {
+                    Ok(error) => {
+                        epoch_error += error;
+                        sample_count += 1;
+                    }
+                    Err(e) => {
+                        crate::println!("[NN] Training error at epoch {}: {}", epoch, e);
+                    }
+                }
+            }
+            
+            total_error += epoch_error;
+            
+            // Adaptive learning rate
+            if epoch % 10 == 0 && epoch > 0 {
+                let avg_error = epoch_error / training_data.len() as f32;
+                if avg_error > 0.1 {
+                    self.learning_rate *= 1.05; // Increase if error is high
+                } else if avg_error < 0.01 {
+                    self.learning_rate *= 0.95; // Decrease if error is low
+                }
+                
+                // Keep learning rate in reasonable bounds
+                self.learning_rate = self.learning_rate.max(0.001).min(0.1);
+            }
+        }
+        
+        if sample_count > 0 {
+            Ok(total_error / sample_count as f32)
+        } else {
+            Err("No training samples processed")
+        }
     }
 
     pub fn predict(&self, input: &[f32]) -> f32 {

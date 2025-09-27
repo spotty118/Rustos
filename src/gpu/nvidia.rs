@@ -103,20 +103,36 @@ const NVIDIA_GPU_DEVICE_IDS: &[u16] = &[
 
 /// Detect NVIDIA GPU through PCI scanning
 pub fn detect_nvidia_gpu() -> Result<GPUCapabilities, &'static str> {
-    // Simulate PCI scanning for NVIDIA GPUs
-    // In a real implementation, this would scan the PCI bus for vendor ID 0x10DE
-    
-    // For demonstration, we'll detect a common RTX GPU
+    // Legacy function for backward compatibility
     let device_id = 0x2482; // GeForce RTX 3070
+    create_nvidia_gpu_capabilities(device_id)
+}
+
+/// Detect NVIDIA GPU from PCI device information
+pub fn detect_nvidia_gpu_from_pci(pci_device: crate::gpu::PCIDevice) -> Result<GPUCapabilities, &'static str> {
+    // Verify this is actually an NVIDIA device
+    if pci_device.vendor_id != 0x10DE {
+        return Err("Not an NVIDIA device");
+    }
     
-    // Check if this is a known NVIDIA GPU
-    let is_nvidia_gpu = NVIDIA_GPU_DEVICE_IDS.contains(&device_id) || 
-                        is_nvidia_device_id(device_id);
+    // Verify this is a display controller
+    if pci_device.class_code != 0x03 {
+        return Err("Not a display controller");
+    }
+    
+    // Check if this is a known NVIDIA GPU device ID
+    let is_nvidia_gpu = NVIDIA_GPU_DEVICE_IDS.contains(&pci_device.device_id) || 
+                        is_nvidia_device_id(pci_device.device_id);
 
     if !is_nvidia_gpu {
-        return Err("No NVIDIA GPU detected");
+        return Err("Unknown NVIDIA GPU device ID");
     }
 
+    create_nvidia_gpu_capabilities(pci_device.device_id)
+}
+
+/// Create GPU capabilities structure for NVIDIA GPU
+fn create_nvidia_gpu_capabilities(device_id: u16) -> Result<GPUCapabilities, &'static str> {
     let memory_size = estimate_nvidia_gpu_memory(device_id);
     let max_resolution = get_nvidia_max_resolution(device_id);
     let (supports_2d, supports_3d, supports_compute) = get_nvidia_capabilities(device_id);
