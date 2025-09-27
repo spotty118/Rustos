@@ -6,8 +6,6 @@
 
 extern crate rustos;
 
-use core::panic::PanicInfo;
-
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     use rustos::vga_buffer::{print_banner, print_colored, Color};
