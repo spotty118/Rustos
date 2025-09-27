@@ -109,6 +109,14 @@ impl Writer {
             self.buffer.chars[row][col].write(blank);
         }
     }
+    
+    /// Clear the entire screen
+    pub fn clear_screen(&mut self) {
+        for row in 0..BUFFER_HEIGHT {
+            self.clear_row(row);
+        }
+        self.column_position = 0;
+    }
 }
 
 impl fmt::Write for Writer {
@@ -207,6 +215,16 @@ pub fn _print(args: fmt::Arguments) {
 
     interrupts::without_interrupts(|| {
         WRITER.lock().write_fmt(args).unwrap();
+    });
+}
+
+/// Clear the entire screen
+pub fn clear_screen() {
+    use x86_64::instructions::interrupts;
+    
+    interrupts::without_interrupts(|| {
+        let mut writer = WRITER.lock();
+        writer.clear_screen();
     });
 }
 
