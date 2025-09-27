@@ -9,6 +9,7 @@ pub mod intel;
 pub mod nvidia;
 pub mod amd;
 pub mod framebuffer;
+pub mod opensource;
 
 /// PCI device information structure
 #[derive(Debug, Clone, Copy)]
@@ -63,6 +64,7 @@ pub struct GPUSystem {
     detected_gpus: Vec<GPUCapabilities, 4>, // Support up to 4 GPUs
     active_gpu: Option<usize>,
     framebuffer: Option<framebuffer::Framebuffer>,
+    opensource_registry: Option<opensource::OpensourceDriverRegistry>, // Opensource driver support
 }
 
 impl GPUSystem {
@@ -72,6 +74,7 @@ impl GPUSystem {
             detected_gpus: Vec::new(),
             active_gpu: None,
             framebuffer: None,
+            opensource_registry: None,
         }
     }
 
@@ -80,6 +83,19 @@ impl GPUSystem {
         self.status = GPUStatus::Initializing;
         
         crate::println!("[GPU] Initializing GPU acceleration system...");
+        
+        // Initialize opensource driver registry first
+        crate::println!("[GPU] Initializing opensource driver support...");
+        match opensource::init_opensource_drivers() {
+            Ok(registry) => {
+                self.opensource_registry = Some(registry);
+                crate::println!("[GPU] Opensource driver support initialized");
+            }
+            Err(e) => {
+                crate::println!("[GPU] Warning: Failed to initialize opensource drivers: {}", e);
+                crate::println!("[GPU] Falling back to basic driver support");
+            }
+        }
         
         // Detect GPUs via PCI enumeration
         self.detect_gpus()?;
@@ -107,39 +123,67 @@ impl GPUSystem {
         
         // Process each detected device
         for pci_device in detected_devices {
-            match pci_device.vendor_id {
-                0x8086 => {
-                    // Intel GPU
-                    if let Ok(intel_gpu) = intel::detect_intel_gpu_from_pci(pci_device) {
-                        crate::println!("[GPU] Detected Intel GPU: 0x{:04X}", intel_gpu.pci_device_id);
-                        if self.detected_gpus.push(intel_gpu).is_err() {
+            // First try to detect with opensource drivers if available
+            let mut gpu_detected = false;
+            
+            if let Some(ref registry) = self.opensource_registry {
+                if let Some(_driver) = registry.find_driver_for_device(&pci_device) {
+                    // Try to create GPU capabilities using opensource driver information
+                    if let Ok(gpu_caps) = self.detect_gpu_with_opensource_driver(&pci_device, registry) {
+                        crate::println!("[GPU] Detected GPU with opensource driver: {:?} (0x{:04X})", 
+                                       gpu_caps.vendor, gpu_caps.pci_device_id);
+                        if self.detected_gpus.push(gpu_caps).is_err() {
                             crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
                         }
+                        gpu_detected = true;
                     }
                 }
-                0x10DE => {
-                    // NVIDIA GPU
-                    if let Ok(nvidia_gpu) = nvidia::detect_nvidia_gpu_from_pci(pci_device) {
-                        crate::println!("[GPU] Detected NVIDIA GPU: 0x{:04X}", nvidia_gpu.pci_device_id);
-                        if self.detected_gpus.push(nvidia_gpu).is_err() {
-                            crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+            }
+            
+            // Fall back to built-in drivers if opensource driver detection failed
+            if !gpu_detected {
+                match pci_device.vendor_id {
+                    0x8086 => {
+                        // Intel GPU
+                        if let Ok(intel_gpu) = intel::detect_intel_gpu_from_pci(pci_device) {
+                            crate::println!("[GPU] Detected Intel GPU (built-in driver): 0x{:04X}", intel_gpu.pci_device_id);
+                            if self.detected_gpus.push(intel_gpu).is_err() {
+                                crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+                            }
                         }
                     }
-                }
-                0x1002 => {
-                    // AMD GPU
-                    if let Ok(amd_gpu) = amd::detect_amd_gpu_from_pci(pci_device) {
-                        crate::println!("[GPU] Detected AMD GPU: 0x{:04X}", amd_gpu.pci_device_id);
-                        if self.detected_gpus.push(amd_gpu).is_err() {
-                            crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+                    0x10DE => {
+                        // NVIDIA GPU
+                        if let Ok(nvidia_gpu) = nvidia::detect_nvidia_gpu_from_pci(pci_device) {
+                            crate::println!("[GPU] Detected NVIDIA GPU (built-in driver): 0x{:04X}", nvidia_gpu.pci_device_id);
+                            if self.detected_gpus.push(nvidia_gpu).is_err() {
+                                crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+                            }
                         }
                     }
-                }
-                _ => {
-                    // Unknown vendor - check if it's a GPU by class code
-                    if pci_device.class_code == 0x03 { // Display controller
-                        crate::println!("[GPU] Found unknown GPU vendor: 0x{:04X}, device: 0x{:04X}", 
-                                       pci_device.vendor_id, pci_device.device_id);
+                    0x1002 => {
+                        // AMD GPU
+                        if let Ok(amd_gpu) = amd::detect_amd_gpu_from_pci(pci_device) {
+                            crate::println!("[GPU] Detected AMD GPU (built-in driver): 0x{:04X}", amd_gpu.pci_device_id);
+                            if self.detected_gpus.push(amd_gpu).is_err() {
+                                crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+                            }
+                        }
+                    }
+                    _ => {
+                        // Unknown vendor - check if it's a GPU by class code
+                        if pci_device.class_code == 0x03 { // Display controller
+                            crate::println!("[GPU] Found unknown GPU vendor: 0x{:04X}, device: 0x{:04X}", 
+                                           pci_device.vendor_id, pci_device.device_id);
+                            
+                            // Try to create fallback capabilities with opensource driver support
+                            if let Some(ref registry) = self.opensource_registry {
+                                let fallback_gpu = opensource::create_fallback_capabilities(&pci_device);
+                                if self.detected_gpus.push(fallback_gpu).is_err() {
+                                    crate::println!("[GPU] Warning: Cannot add more GPUs (limit reached)");
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -271,6 +315,39 @@ impl GPUSystem {
         // For BARs, return simulated memory-mapped I/O addresses
         Ok(0x00000000) // Simplified - real implementation would return actual BAR values
     }
+    
+    /// Detect GPU using opensource driver information
+    fn detect_gpu_with_opensource_driver(&self, pci_device: &PCIDevice, registry: &opensource::OpensourceDriverRegistry) -> Result<GPUCapabilities, &'static str> {
+        // Find compatible opensource driver
+        if let Some(driver) = registry.find_driver_for_device(pci_device) {
+            crate::println!("[GPU] Found compatible opensource driver: {} for device 0x{:04X}", 
+                           driver.name, pci_device.device_id);
+            
+            // Create enhanced GPU capabilities based on opensource driver features
+            let vendor = match pci_device.vendor_id {
+                0x8086 => GPUVendor::Intel,
+                0x10DE => GPUVendor::Nvidia,
+                0x1002 => GPUVendor::AMD,
+                _ => GPUVendor::Unknown,
+            };
+            
+            // Estimate capabilities based on driver features and device
+            let memory_size = estimate_gpu_memory_size(vendor, pci_device.device_id);
+            let max_resolution = estimate_max_resolution(vendor, pci_device.device_id);
+            
+            Ok(GPUCapabilities {
+                vendor,
+                memory_size,
+                max_resolution,
+                supports_2d_accel: driver.features.direct_rendering,
+                supports_3d_accel: driver.features.direct_rendering,
+                supports_compute: driver.features.compute_shaders,
+                pci_device_id: pci_device.device_id,
+            })
+        } else {
+            Err("No compatible opensource driver found")
+        }
+    }
 
     /// Initialize the best available GPU
     fn initialize_best_gpu(&mut self) -> Result<(), &'static str> {
@@ -296,12 +373,27 @@ impl GPUSystem {
             let gpu = &self.detected_gpus[gpu_index];
             crate::println!("[GPU] Initializing {:?} GPU for acceleration", gpu.vendor);
             
-            // Initialize vendor-specific driver
-            match gpu.vendor {
-                GPUVendor::Intel => intel::initialize_intel_gpu(gpu)?,
-                GPUVendor::Nvidia => nvidia::initialize_nvidia_gpu(gpu)?,
-                GPUVendor::AMD => amd::initialize_amd_gpu(gpu)?,
-                GPUVendor::Unknown => return Err("Cannot initialize unknown GPU"),
+            // Get PCI device for this GPU (simplified - in real implementation would store PCI info)
+            let pci_device = self.create_pci_device_for_gpu(gpu)?;
+            
+            // First try to initialize with opensource driver
+            let mut initialized_with_opensource = false;
+            if let Some(ref mut registry) = self.opensource_registry {
+                if let Ok(()) = registry.initialize_driver(gpu, &pci_device) {
+                    crate::println!("[GPU] GPU initialized with opensource driver");
+                    initialized_with_opensource = true;
+                }
+            }
+            
+            // Fall back to built-in drivers if opensource initialization failed
+            if !initialized_with_opensource {
+                crate::println!("[GPU] Falling back to built-in driver");
+                match gpu.vendor {
+                    GPUVendor::Intel => intel::initialize_intel_gpu(gpu)?,
+                    GPUVendor::Nvidia => nvidia::initialize_nvidia_gpu(gpu)?,
+                    GPUVendor::AMD => amd::initialize_amd_gpu(gpu)?,
+                    GPUVendor::Unknown => return Err("Cannot initialize unknown GPU"),
+                }
             }
 
             // Set up framebuffer
@@ -343,6 +435,34 @@ impl GPUSystem {
         if let Some(ref mut fb) = self.framebuffer {
             fb.present();
         }
+    }
+    
+    /// Create a PCI device structure for a GPU (helper function)
+    fn create_pci_device_for_gpu(&self, gpu: &GPUCapabilities) -> Result<PCIDevice, &'static str> {
+        // This is a simplified implementation - in a real system, we would
+        // store the original PCI device information when detecting GPUs
+        
+        let vendor_id = match gpu.vendor {
+            GPUVendor::Intel => 0x8086,
+            GPUVendor::Nvidia => 0x10DE,
+            GPUVendor::AMD => 0x1002,
+            GPUVendor::Unknown => 0xFFFF,
+        };
+        
+        Ok(PCIDevice {
+            bus: 0,
+            device: 0,
+            function: 0,
+            vendor_id,
+            device_id: gpu.pci_device_id,
+            command: 0x0006,
+            status: 0x0010,
+            class_code: 0x03, // Display controller
+            subclass: 0x00,   // VGA compatible controller
+            prog_if: 0x00,
+            revision: 0x01,
+            bars: [0; 6],
+        })
     }
 }
 
@@ -539,6 +659,68 @@ fn write_bmp_to_filesystem(_filename: &str, bmp_data: &[u8]) -> Result<(), &'sta
     
     crate::println!("[GPU] Filesystem write operation completed");
     Ok(())
+}
+
+/// Estimate GPU memory size based on vendor and device ID
+fn estimate_gpu_memory_size(vendor: GPUVendor, device_id: u16) -> u64 {
+    match vendor {
+        GPUVendor::Intel => {
+            // Intel integrated GPUs share system memory
+            match device_id {
+                0x9A49 | 0x9A40 | 0x9A60 | 0x9A68 | 0x9A70 => 512 * 1024 * 1024, // Tiger Lake
+                0x8A50..=0x8A53 => 256 * 1024 * 1024, // Ice Lake
+                _ => 128 * 1024 * 1024, // Default for older Intel
+            }
+        }
+        GPUVendor::Nvidia => {
+            // NVIDIA discrete GPUs
+            match device_id {
+                0x2482 => 8 * 1024 * 1024 * 1024,  // RTX 3070 - 8GB
+                0x2484 => 12 * 1024 * 1024 * 1024, // RTX 3070 Ti - 8GB (simulated 12GB)
+                0x2204 => 24 * 1024 * 1024 * 1024, // RTX 3090 - 24GB
+                _ => 4 * 1024 * 1024 * 1024, // Default 4GB
+            }
+        }
+        GPUVendor::AMD => {
+            // AMD discrete GPUs
+            match device_id {
+                0x73A1 => 16 * 1024 * 1024 * 1024, // RX 6900 XT - 16GB
+                0x73A2 => 16 * 1024 * 1024 * 1024, // RX 6800 XT - 16GB
+                0x73AB => 8 * 1024 * 1024 * 1024,  // RX 6600 XT - 8GB
+                0x744C => 24 * 1024 * 1024 * 1024, // RX 7900 XTX - 24GB
+                _ => 8 * 1024 * 1024 * 1024, // Default 8GB
+            }
+        }
+        GPUVendor::Unknown => 128 * 1024 * 1024, // Conservative 128MB
+    }
+}
+
+/// Estimate maximum resolution based on vendor and device ID
+fn estimate_max_resolution(vendor: GPUVendor, device_id: u16) -> (u32, u32) {
+    match vendor {
+        GPUVendor::Intel => {
+            match device_id {
+                0x9A49 | 0x9A40 | 0x9A60 | 0x9A68 | 0x9A70 => (7680, 4320), // Tiger Lake - 8K
+                0x8A50..=0x8A53 => (5120, 2880), // Ice Lake - 5K
+                _ => (3840, 2160), // Default 4K
+            }
+        }
+        GPUVendor::Nvidia => {
+            // Modern NVIDIA GPUs support very high resolutions
+            match device_id {
+                0x2204 | 0x2482 | 0x2484 => (7680, 4320), // RTX 30 series - 8K
+                _ => (3840, 2160), // Default 4K
+            }
+        }
+        GPUVendor::AMD => {
+            // Modern AMD GPUs support high resolutions
+            match device_id {
+                0x73A1 | 0x73A2 | 0x744C => (7680, 4320), // High-end - 8K
+                _ => (3840, 2160), // Default 4K
+            }
+        }
+        GPUVendor::Unknown => (1920, 1080), // Conservative 1080p
+    }
 }
 
 #[test_case]
