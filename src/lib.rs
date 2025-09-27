@@ -15,6 +15,7 @@ pub mod gdt;
 pub mod memory;
 pub mod allocator;
 pub mod ai;
+pub mod arch;
 
 // Re-export commonly used items
 // Note: Macros are already exported at crate root due to #[macro_export]
@@ -28,28 +29,42 @@ pub fn init() {
 
 pub fn hlt_loop() -> ! {
     loop {
-        x86_64::instructions::hlt();
+        arch::halt_cpu();
     }
 }
 
 /// Entry point for the kernel
-#[no_mangle]
+#[no_mangle] 
 pub extern "C" fn _start() -> ! {
-    println!("Welcome to RustOS - An AI-Powered Operating System!");
-    println!("Initializing AI kernel components...");
+    use vga_buffer::{print_banner, print_colored, Color};
+    
+    print_banner("RustOS - Hardware-Optimized AI Operating System", Color::LightCyan, Color::Black);
+    print_colored("Architecture: x86_64/aarch64 compatible", Color::LightBlue, Color::Black);
+    print_colored("Initializing hardware-focused AI kernel components...", Color::Yellow, Color::Black);
     
     init();
     
-    // Initialize AI subsystem
+    // Initialize AI subsystem with hardware focus  
     ai::init_ai_system();
     
-    println!("RustOS AI kernel successfully initialized!");
-    println!("AI inference engine status: {}", ai::get_ai_status());
+    print_colored("RustOS AI kernel successfully initialized!", Color::LightGreen, Color::Black);
+    
+    // Print AI status without format macro
+    let status = ai::get_ai_status();
+    match status {
+        ai::AIStatus::Ready => vga_buffer::print_ai_status("Ready"),
+        ai::AIStatus::Learning => vga_buffer::print_ai_status("Learning"),
+        ai::AIStatus::Inferencing => vga_buffer::print_ai_status("Inferencing"),
+        ai::AIStatus::Error => vga_buffer::print_ai_status("Error"),
+        ai::AIStatus::Initializing => vga_buffer::print_ai_status("Initializing"),
+    }
+    
+    print_colored("AI now learning hardware patterns for optimal performance...", Color::Pink, Color::Black);
     
     #[cfg(test)]
     test_main();
     
-    println!("RustOS kernel is running...");
+    print_banner("System Ready - Hardware Optimization Active", Color::LightGreen, Color::Black);
     hlt_loop();
 }
 

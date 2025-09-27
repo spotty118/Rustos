@@ -62,7 +62,10 @@ extern "x86-interrupt" fn double_fault_handler(
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
-    // Trigger AI inference periodically
+    // Record interrupt for hardware monitoring
+    crate::ai::hardware_monitor::record_interrupt();
+    
+    // Trigger AI hardware analysis periodically
     crate::ai::periodic_ai_task();
     
     unsafe {
@@ -94,13 +97,16 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
             match key {
                 DecodedKey::Unicode(character) => {
                     print!("{}", character);
-                    // Feed keyboard input to AI system for learning
-                    crate::ai::process_keyboard_input(character);
+                    // Record I/O operation for hardware monitoring
+                    crate::ai::hardware_monitor::record_io_operation();
                 },
                 DecodedKey::RawKey(key) => print!("{:?}", key),
             }
         }
     }
+
+    // Record interrupt for hardware monitoring
+    crate::ai::hardware_monitor::record_interrupt();
 
     unsafe {
         PICS.lock()
