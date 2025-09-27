@@ -17,6 +17,7 @@ pub mod allocator;
 pub mod ai;
 pub mod arch;
 pub mod gpu;
+pub mod peripheral;
 pub mod package_manager;
 
 // Re-export commonly used items
