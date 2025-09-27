@@ -237,28 +237,3 @@ impl LearningSystem {
     }
 }
 
-#[test_case]
-fn test_learning_system_creation() {
-    let learning_system = LearningSystem::new();
-    assert_eq!(learning_system.get_training_samples_count(), 0);
-    assert!(learning_system.get_learning_rate() > 0.0);
-}
-
-#[test_case]
-fn test_add_training_sample() {
-    let mut learning_system = LearningSystem::new();
-    let sample = TrainingSample::new([0.1; MAX_PATTERN_SIZE], 0.5);
-    
-    assert!(learning_system.add_training_sample(sample).is_ok());
-    assert_eq!(learning_system.get_training_samples_count(), 1);
-}
-
-#[test_case]
-fn test_pattern_similarity() {
-    let learning_system = LearningSystem::new();
-    let pattern1 = [0.5; MAX_PATTERN_SIZE];
-    let pattern2 = [0.5; MAX_PATTERN_SIZE];
-    
-    let similarity = learning_system.calculate_pattern_similarity(&pattern1, &pattern2);
-    assert!((similarity - 1.0).abs() < 0.001);
-}

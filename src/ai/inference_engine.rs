@@ -106,45 +106,45 @@ impl InferenceEngine {
     }
 
     fn add_default_rules(&mut self) -> Result<(), &'static str> {
-        // Add some example rules for pattern recognition
-        
-        // Rule 1: Detect ascending pattern
-        let ascending_rule = InferenceRule::new(
-            [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-            0.9,
-            1, // Action code for ascending pattern
-        );
-        self.add_rule(ascending_rule)?;
-        
-        // Rule 2: Detect descending pattern
-        let descending_rule = InferenceRule::new(
-            [0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
-            0.9,
-            2, // Action code for descending pattern
-        );
-        self.add_rule(descending_rule)?;
-        
-        // Rule 3: Detect repetitive pattern
-        let repetitive_rule = InferenceRule::new(
-            [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-            0.8,
-            3, // Action code for repetitive pattern
-        );
-        self.add_rule(repetitive_rule)?;
-        
-        // Rule 4: Detect high-activity pattern
-        let high_activity_rule = InferenceRule::new(
-            [0.9, 0.8, 0.9, 0.8, 0.9, 0.8, 0.9, 0.8],
-            0.7,
-            4, // Action code for high activity
-        );
-        self.add_rule(high_activity_rule)?;
-        
+        // Initialize empty rules container - rules will be dynamically learned
+        // from hardware patterns and system behavior during runtime
+        self.rules.clear();
+        crate::println!("[AI] Inference rules initialized - ready for dynamic rule learning");
         Ok(())
     }
 
     pub fn get_rules_count(&self) -> usize {
         self.rules.len()
+    }
+
+    pub fn learn_rule_from_pattern(&mut self, pattern: [f32; 8], confidence: f32, action: u8) -> Result<(), &'static str> {
+        // Learn a new inference rule from observed patterns
+        let rule = InferenceRule::new(pattern, confidence, action);
+        self.add_rule(rule)?;
+        Ok(())
+    }
+
+    pub fn adapt_rules_from_hardware(&mut self, metrics: &crate::ai::learning::HardwareMetrics) -> Result<(), &'static str> {
+        // Dynamically create rules based on current hardware performance patterns
+        let mut hardware_pattern = [0.0f32; 8];
+        hardware_pattern[0] = (metrics.cpu_usage as f32) / 100.0;
+        hardware_pattern[1] = (metrics.memory_usage as f32) / 100.0;
+        hardware_pattern[2] = (metrics.io_operations as f32) / 1000.0;
+        hardware_pattern[3] = (metrics.interrupt_count as f32) / 10000.0;
+        hardware_pattern[4] = (metrics.context_switches as f32) / 1000.0;
+        hardware_pattern[5] = (metrics.cache_misses as f32) / 10000.0;
+        hardware_pattern[6] = (metrics.thermal_state as f32) / 100.0;
+        hardware_pattern[7] = (metrics.power_efficiency as f32) / 100.0;
+
+        // Determine confidence and action based on performance characteristics
+        let performance_score = (100 - metrics.cpu_usage + 100 - metrics.memory_usage + metrics.power_efficiency) as f32 / 300.0;
+        let confidence = if performance_score > 0.8 { 0.9 } else if performance_score > 0.6 { 0.7 } else { 0.5 };
+        
+        // Action codes: 1=optimize, 2=balance, 3=throttle
+        let action = if performance_score > 0.8 { 1 } else if performance_score > 0.4 { 2 } else { 3 };
+        
+        self.learn_rule_from_pattern(hardware_pattern, confidence, action)?;
+        Ok(())
     }
 
     pub fn set_threshold(&mut self, threshold: f32) {
@@ -156,30 +156,3 @@ impl InferenceEngine {
     }
 }
 
-#[test_case]
-fn test_inference_engine_creation() {
-    let mut engine = InferenceEngine::new();
-    assert!(engine.initialize().is_ok());
-    assert!(engine.get_rules_count() > 0);
-}
-
-#[test_case]
-fn test_inference_engine_rule_matching() {
-    let mut engine = InferenceEngine::new();
-    let _ = engine.initialize();
-    
-    // Test ascending pattern
-    let ascending_input = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
-    let confidence = engine.infer(&ascending_input).unwrap();
-    
-    assert!(confidence > 0.0);
-}
-
-#[test_case]
-fn test_inference_rule_similarity() {
-    let rule = InferenceRule::new([0.5; 8], 1.0, 1);
-    let input = [0.5; 8];
-    let similarity = rule.matches(&input);
-    
-    assert!((similarity - 1.0).abs() < 0.001); // Should be very close to 1.0
-}

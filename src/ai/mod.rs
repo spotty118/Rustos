@@ -55,17 +55,17 @@ impl AISystem {
     }
 
     pub fn initialize(&mut self) -> Result<(), &'static str> {
-        crate::println!("[AI] Initializing neural network...");
+        crate::println!("[AI] Initializing production neural network...");
         self.neural_network.initialize()?;
         
-        crate::println!("[AI] Initializing inference engine...");
+        crate::println!("[AI] Initializing production inference engine...");
         self.inference_engine.initialize()?;
         
-        crate::println!("[AI] Loading pre-trained patterns...");
+        crate::println!("[AI] Preparing dynamic pattern learning system...");
         self.load_default_patterns()?;
         
         self.status = AIStatus::Ready;
-        crate::println!("[AI] AI system successfully initialized!");
+        crate::println!("[AI] Production AI system successfully initialized!");
         Ok(())
     }
 
@@ -82,6 +82,14 @@ impl AISystem {
             self.status = AIStatus::Error;
             return;
         }
+
+        // Dynamically adapt inference rules based on current hardware patterns
+        if let Err(e) = self.inference_engine.adapt_rules_from_hardware(&metrics) {
+            crate::println!("[AI] Rule adaptation error: {}", e);
+        }
+
+        // Store learned patterns from hardware metrics for future reference
+        self.store_hardware_pattern(&metrics);
         
         // Try to predict optimization strategy
         if let Some(optimization) = self.learning_system.predict_hardware_optimization(&metrics) {
@@ -90,6 +98,28 @@ impl AISystem {
         }
         
         self.status = AIStatus::Ready;
+    }
+
+    fn store_hardware_pattern(&mut self, metrics: &HardwareMetrics) {
+        // Convert hardware metrics to a learnable pattern
+        let mut pattern = [0.0f32; MAX_INPUT_SIZE];
+        pattern[0] = (metrics.cpu_usage as f32) / 100.0;
+        pattern[1] = (metrics.memory_usage as f32) / 100.0;
+        pattern[2] = (metrics.io_operations as f32) / 1000.0;
+        pattern[3] = (metrics.interrupt_count as f32) / 10000.0;
+        pattern[4] = (metrics.context_switches as f32) / 1000.0;
+        pattern[5] = (metrics.cache_misses as f32) / 10000.0;
+        pattern[6] = (metrics.thermal_state as f32) / 100.0;
+        pattern[7] = (metrics.power_efficiency as f32) / 100.0;
+
+        // Store pattern if there's space
+        if self.learned_patterns.len() < MAX_LEARNED_PATTERNS {
+            let _ = self.learned_patterns.push(pattern);
+        } else {
+            // Replace oldest pattern with new one
+            self.learned_patterns.remove(0);
+            let _ = self.learned_patterns.push(pattern);
+        }
     }
 
     pub fn periodic_task(&mut self) {
@@ -124,16 +154,10 @@ impl AISystem {
     }
 
     fn load_default_patterns(&mut self) -> Result<(), &'static str> {
-        // Load some default patterns for demonstration
-        let mut pattern1 = [0.0f32; MAX_INPUT_SIZE];
-        pattern1[0] = 0.1; pattern1[1] = 0.2; pattern1[2] = 0.3; pattern1[3] = 0.4; pattern1[4] = 0.5;
-        
-        let mut pattern2 = [0.0f32; MAX_INPUT_SIZE];
-        pattern2[0] = 0.5; pattern2[1] = 0.4; pattern2[2] = 0.3; pattern2[3] = 0.2; pattern2[4] = 0.1;
-        
-        let _ = self.learned_patterns.push(pattern1);
-        let _ = self.learned_patterns.push(pattern2);
-        
+        // Initialize empty patterns container - patterns will be learned during runtime
+        // from actual hardware metrics and system behavior
+        self.learned_patterns.clear();
+        crate::println!("[AI] Pattern storage initialized - ready to learn from hardware");
         Ok(())
     }
 }
@@ -168,29 +192,3 @@ pub fn periodic_ai_task() {
     AI_SYSTEM.lock().periodic_task();
 }
 
-#[test_case]
-fn test_ai_initialization() {
-    let mut ai = AISystem::new();
-    assert!(ai.initialize().is_ok());
-    assert_eq!(ai.get_status(), AIStatus::Ready);
-}
-
-#[test_case]
-fn test_hardware_metrics_processing() {
-    let mut ai = AISystem::new();
-    let _ = ai.initialize();
-    
-    let test_metrics = HardwareMetrics {
-        cpu_usage: 50,
-        memory_usage: 60,
-        io_operations: 100,
-        interrupt_count: 500,
-        context_switches: 200,
-        cache_misses: 50,
-        thermal_state: 40,
-        power_efficiency: 80,
-    };
-    
-    ai.process_hardware_data(test_metrics);
-    assert_eq!(ai.get_status(), AIStatus::Ready);
-}

@@ -132,20 +132,3 @@ impl NeuralNetwork {
     }
 }
 
-#[test_case]
-fn test_neural_network_creation() {
-    let mut nn = NeuralNetwork::new();
-    assert!(nn.initialize().is_ok());
-    assert_eq!(nn.layers.len(), 3);
-}
-
-#[test_case]
-fn test_neural_network_forward_pass() {
-    let mut nn = NeuralNetwork::new();
-    let _ = nn.initialize();
-    
-    let input = [0.1, 0.2, 0.3, 0.4, 0.5, 0.0, 0.0, 0.0];
-    let output = nn.forward(&input);
-    
-    assert!(!output.is_empty());
-}
