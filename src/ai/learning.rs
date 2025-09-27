@@ -13,6 +13,9 @@ pub struct HardwareMetrics {
     pub cache_misses: u32,       // Cache misses per second
     pub thermal_state: u8,       // Thermal state (0-100, higher = hotter)
     pub power_efficiency: u8,    // Power efficiency score (0-100, higher = better)
+    pub gpu_usage: u8,           // GPU usage percentage (0-100) - NEW
+    pub gpu_memory_usage: u8,    // GPU memory usage percentage (0-100) - NEW
+    pub gpu_temperature: u8,     // GPU temperature relative (0-100) - NEW
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

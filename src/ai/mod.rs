@@ -112,12 +112,22 @@ impl AISystem {
         input[1] = (current_metrics.memory_usage as f32) / 100.0;
         input[2] = (current_metrics.io_operations as f32) / 1000.0;
         input[3] = (current_metrics.interrupt_count as f32) / 10000.0;
+        input[4] = (current_metrics.gpu_usage as f32) / 100.0;      // GPU usage
+        input[5] = (current_metrics.gpu_memory_usage as f32) / 100.0; // GPU memory
+        input[6] = (current_metrics.gpu_temperature as f32) / 100.0;  // GPU temp
 
         // Run inference
         let result = self.inference_engine.infer(&input)?;
         
         if result > 0.7 {
             crate::println!("[AI] High confidence hardware pattern detected: {:.2}", result);
+            // Log GPU-specific insights if available
+            if current_metrics.gpu_usage > 0 {
+                crate::println!("[AI] GPU utilization: {}%, Memory: {}%, Temp: {}°", 
+                               current_metrics.gpu_usage, 
+                               current_metrics.gpu_memory_usage,
+                               current_metrics.gpu_temperature + 20); // Convert to approximate Celsius
+            }
         }
         
         Ok(result)
@@ -189,6 +199,9 @@ fn test_hardware_metrics_processing() {
         cache_misses: 50,
         thermal_state: 40,
         power_efficiency: 80,
+        gpu_usage: 30,
+        gpu_memory_usage: 25,
+        gpu_temperature: 35,
     };
     
     ai.process_hardware_data(test_metrics);

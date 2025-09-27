@@ -23,6 +23,9 @@ impl HardwareMonitor {
                 cache_misses: 0,
                 thermal_state: 25, // Start at room temperature equivalent
                 power_efficiency: 75, // Start with decent efficiency
+                gpu_usage: 0,
+                gpu_memory_usage: 0,
+                gpu_temperature: 25, // Start at room temperature
             },
             sample_count: 0,
             interrupt_count: 0,
@@ -53,6 +56,17 @@ impl HardwareMonitor {
         let efficiency_bonus = if cpu_features.contains("aarch64") { 10 } else { 0 };
         let power_efficiency = core::cmp::min(100, 100 - (thermal_state * 100 / 125) + efficiency_bonus);
         
+        // Calculate GPU metrics if GPU acceleration is available
+        let (gpu_usage, gpu_memory_usage, gpu_temperature) = if crate::gpu::is_gpu_acceleration_available() {
+            // Simulate GPU usage based on desktop UI activity
+            let gpu_usage = core::cmp::min(100, (self.sample_count / 20) as u8);
+            let gpu_memory_usage = core::cmp::min(100, (self.sample_count / 30) as u8);
+            let gpu_temperature = thermal_base + (gpu_usage * 50 / 100); // GPUs run cooler for UI work
+            (gpu_usage, gpu_memory_usage, gpu_temperature)
+        } else {
+            (0, 0, thermal_base) // No GPU activity
+        };
+        
         crate::println!("[HW Monitor] Arch: {}, Perf Counter: {}", cpu_features, perf_counter);
         
         self.last_metrics = HardwareMetrics {
@@ -64,6 +78,9 @@ impl HardwareMonitor {
             cache_misses: self.cache_miss_count,
             thermal_state,
             power_efficiency,
+            gpu_usage,
+            gpu_memory_usage,
+            gpu_temperature,
         };
         
         // Reset counters for next sample period
