@@ -62,10 +62,12 @@ RustOS Hardware-Optimized AI Kernel Architecture
 ### Prerequisites
 
 - Rust nightly toolchain
-- QEMU (for testing and running the kernel)
-- Bootimage tool for creating bootable disk images
+- QEMU (for future bootable image support and testing)
+- Bootimage tool for creating bootable disk images (optional for current development)
 
 ### Installation
+
+#### Option 1: Step-by-step installation
 
 1. Install Rust nightly with required components:
 ```bash
@@ -73,21 +75,90 @@ rustup toolchain install nightly
 rustup component add rust-src llvm-tools-preview
 ```
 
-2. Install bootimage:
+2. Install bootimage (optional for current library-only build):
 ```bash
 cargo install bootimage
+
+# If you encounter issues, try updating your Rust toolchain first:
+# rustup update nightly
+# rustup component add rust-src llvm-tools-preview
+
+# Alternative: Install from a specific version if needed
+# cargo install bootimage --version 0.10.3
 ```
 
-3. Install QEMU:
+3. Install QEMU (for future bootable image support):
 ```bash
-# On Ubuntu/Debian
-sudo apt install qemu-system-x86
+# Ubuntu/Debian
+sudo apt update && sudo apt install qemu-system-x86
 
-# On macOS
+# Fedora/RHEL/CentOS (dnf)
+sudo dnf install qemu-system-x86
+
+# RHEL/CentOS (yum)
+sudo yum install qemu-system-x86
+
+# Arch Linux
+sudo pacman -S qemu-system-i386
+
+# openSUSE (zypper)
+sudo zypper install qemu-x86
+
+# Alpine Linux
+sudo apk add qemu-system-x86_64
+
+# macOS
 brew install qemu
 
-# On Windows
+# Windows
 # Download QEMU from https://www.qemu.org/download/
+```
+
+#### Option 2: Quick Setup (One-liner for supported systems)
+
+For quick setup on common Linux distributions:
+
+```bash
+# Ubuntu/Debian
+curl -sSf https://sh.rustup.rs | sh -s -- --default-toolchain nightly -y && \
+source ~/.cargo/env && \
+rustup component add rust-src llvm-tools-preview && \
+cargo install bootimage && \
+sudo apt update && sudo apt install qemu-system-x86
+
+# Fedora
+curl -sSf https://sh.rustup.rs | sh -s -- --default-toolchain nightly -y && \
+source ~/.cargo/env && \
+rustup component add rust-src llvm-tools-preview && \
+cargo install bootimage && \
+sudo dnf install qemu-system-x86
+
+# Arch Linux
+curl -sSf https://sh.rustup.rs | sh -s -- --default-toolchain nightly -y && \
+source ~/.cargo/env && \
+rustup component add rust-src llvm-tools-preview && \
+cargo install bootimage && \
+sudo pacman -S qemu-system-i386
+```
+
+#### Option 3: Using distro package managers for Rust (if available)
+
+Some distributions provide Rust packages, though nightly may not be available:
+
+```bash
+# Ubuntu/Debian (stable Rust only)
+sudo apt install rustc cargo
+
+# Fedora
+sudo dnf install rust cargo
+
+# Arch Linux
+sudo pacman -S rust
+
+# Then switch to nightly:
+rustup toolchain install nightly
+rustup default nightly
+rustup component add rust-src llvm-tools-preview
 ```
 
 ### Building and Running
@@ -101,27 +172,20 @@ cd Rustos
 2. Build the kernel (x86_64):
 ```bash
 cargo build --lib
-# or use the alias
-cargo build-lib
+# or use the alias (if configured)
+# cargo build-lib
 ```
 
 3. Build for ARM64 (partial support):
 ```bash
 cargo build --lib --target aarch64-apple-rustos.json
-# or use the alias  
-cargo build-arm
+# or use the alias (if configured)
+# cargo build-arm
 ```
 
-4. Create a bootable image and run in QEMU (x86_64 only):
+4. Run tests to verify AI components:
 ```bash
-# Install bootimage tool first
-cargo install bootimage
-
-# Build bootable image
-bootimage build
-
-# Run in QEMU (install qemu-system-x86_64 first)
-qemu-system-x86_64 -drive format=raw,file=target/x86_64-unknown-none/debug/bootimage-rustos.bin
+cargo test
 ```
 
 ### Quick Build Verification
