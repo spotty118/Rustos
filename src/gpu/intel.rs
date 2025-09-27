@@ -78,20 +78,37 @@ const INTEL_GPU_DEVICE_IDS: &[u16] = &[
 
 /// Detect Intel GPU through PCI scanning
 pub fn detect_intel_gpu() -> Result<GPUCapabilities, &'static str> {
-    // Simulate PCI scanning for Intel GPUs
-    // In a real implementation, this would scan the PCI bus
-    
-    // For demonstration, we'll detect a common Intel UHD Graphics
+    // Legacy function for backward compatibility
+    // In practice, this would be called through detect_intel_gpu_from_pci
     let device_id = 0x9A49; // Intel Iris Xe Graphics
+    create_intel_gpu_capabilities(device_id)
+}
+
+/// Detect Intel GPU from PCI device information
+pub fn detect_intel_gpu_from_pci(pci_device: crate::gpu::PCIDevice) -> Result<GPUCapabilities, &'static str> {
+    // Verify this is actually an Intel device
+    if pci_device.vendor_id != 0x8086 {
+        return Err("Not an Intel device");
+    }
     
-    // Check if this is a known Intel GPU
-    let is_intel_gpu = INTEL_GPU_DEVICE_IDS.contains(&device_id) || 
-                       is_intel_device_id(device_id);
+    // Verify this is a display controller
+    if pci_device.class_code != 0x03 {
+        return Err("Not a display controller");
+    }
+    
+    // Check if this is a known Intel GPU device ID
+    let is_intel_gpu = INTEL_GPU_DEVICE_IDS.contains(&pci_device.device_id) || 
+                       is_intel_device_id(pci_device.device_id);
 
     if !is_intel_gpu {
-        return Err("No Intel GPU detected");
+        return Err("Unknown Intel GPU device ID");
     }
 
+    create_intel_gpu_capabilities(pci_device.device_id)
+}
+
+/// Create GPU capabilities structure for Intel GPU
+fn create_intel_gpu_capabilities(device_id: u16) -> Result<GPUCapabilities, &'static str> {
     let memory_size = estimate_intel_gpu_memory(device_id);
     let max_resolution = get_intel_max_resolution(device_id);
     let (supports_2d, supports_3d, supports_compute) = get_intel_capabilities(device_id);

@@ -1,4 +1,5 @@
 use heapless::Vec;
+use micromath;
 
 const MAX_TRAINING_SAMPLES: usize = 32;
 const MAX_PATTERN_SIZE: usize = 8;
@@ -92,13 +93,102 @@ impl LearningSystem {
         input_pattern[6] = (metrics.thermal_state as f32) / 100.0;       // Thermal state (0-100)
         input_pattern[7] = (metrics.power_efficiency as f32) / 100.0;    // Power efficiency (0-100)
         
-        // Calculate expected optimization score based on current performance
-        let expected_output = self.calculate_performance_score(metrics);
+        // Calculate expected optimization score based on current performance and historical data
+        let expected_output = self.calculate_adaptive_performance_score(metrics);
         
         let sample = TrainingSample::new(input_pattern, expected_output);
         self.add_training_sample(sample)?;
         
+        // Update learning parameters based on system performance
+        self.adapt_to_system_state(metrics);
+        
         Ok(())
+    }
+    
+    /// Calculate adaptive performance score using historical trends
+    fn calculate_adaptive_performance_score(&self, metrics: &HardwareMetrics) -> f32 {
+        // Base performance score
+        let cpu_score = 1.0 - (metrics.cpu_usage as f32 / 100.0);
+        let memory_score = 1.0 - (metrics.memory_usage as f32 / 100.0);
+        let thermal_score = 1.0 - (metrics.thermal_state as f32 / 100.0);
+        let power_score = metrics.power_efficiency as f32 / 100.0;
+        
+        let base_score = (cpu_score + memory_score + thermal_score + power_score) / 4.0;
+        
+        // Apply adaptive weighting based on historical patterns
+        let adaptive_weight = self.calculate_adaptive_weight(metrics);
+        
+        // Consider system stability over time
+        let stability_factor = self.calculate_stability_factor();
+        
+        (base_score * adaptive_weight + stability_factor) / 2.0
+    }
+    
+    /// Calculate adaptive weight based on system patterns
+    fn calculate_adaptive_weight(&self, metrics: &HardwareMetrics) -> f32 {
+        let mut weight: f32 = 1.0;
+        
+        // Increase weight for critical resource usage patterns
+        if metrics.cpu_usage > 80 {
+            weight *= 1.2; // High CPU usage needs attention
+        }
+        
+        if metrics.memory_usage > 90 {
+            weight *= 1.3; // Critical memory usage
+        }
+        
+        if metrics.thermal_state > 85 {
+            weight *= 1.4; // Thermal throttling risk
+        }
+        
+        // Reduce weight for already efficient systems
+        if metrics.power_efficiency > 80 {
+            weight *= 0.9;
+        }
+        
+        weight.min(2.0).max(0.5) // Keep weight in reasonable bounds
+    }
+    
+    /// Calculate system stability factor from training history
+    fn calculate_stability_factor(&self) -> f32 {
+        if self.training_samples.len() < 3 {
+            return 0.5; // Default stability for new systems
+        }
+        
+        // Calculate variance in recent performance scores
+        let recent_samples = self.training_samples.len().min(5);
+        let start_idx = self.training_samples.len() - recent_samples;
+        
+        let mut sum = 0.0;
+        let mut sum_squares = 0.0;
+        
+        for i in start_idx..self.training_samples.len() {
+            let score = self.training_samples[i].expected_output;
+            sum += score;
+            sum_squares += score * score;
+        }
+        
+        let mean = sum / recent_samples as f32;
+        let variance = (sum_squares / recent_samples as f32) - (mean * mean);
+        
+        // Lower variance indicates more stability
+        1.0 - variance.min(1.0)
+    }
+    
+    /// Adapt learning parameters to current system state
+    fn adapt_to_system_state(&mut self, metrics: &HardwareMetrics) {
+        // Increase learning rate for systems under stress
+        if metrics.cpu_usage > 90 || metrics.memory_usage > 90 || metrics.thermal_state > 90 {
+            self.learning_rate *= 1.1;
+        }
+        
+        // Decrease learning rate for stable systems
+        if metrics.cpu_usage < 30 && metrics.memory_usage < 50 && metrics.thermal_state < 40 {
+            self.learning_rate *= 0.95;
+        }
+        
+        // Keep learning rate within bounds
+        self.learning_rate = self.learning_rate.max(0.001).min(0.1);
     }
     
     fn calculate_performance_score(&self, metrics: &HardwareMetrics) -> f32 {
@@ -141,28 +231,104 @@ impl LearningSystem {
         let mut matches = Vec::new();
 
         for (i, sample) in self.training_samples.iter().enumerate() {
-            let similarity = self.calculate_pattern_similarity(input, &sample.input);
+            // Use multiple similarity metrics for better pattern detection
+            let euclidean_similarity = self.calculate_euclidean_similarity(input, &sample.input);
+            let cosine_similarity = self.calculate_cosine_similarity(input, &sample.input);
+            let manhattan_similarity = self.calculate_manhattan_similarity(input, &sample.input);
             
-            if similarity > 0.7 { // High similarity threshold
-                let _ = matches.push((i, similarity));
+            // Weighted combination of similarity metrics
+            let combined_similarity = euclidean_similarity * 0.4 + 
+                                     cosine_similarity * 0.4 + 
+                                     manhattan_similarity * 0.2;
+            
+            // Apply temporal weighting (more recent samples get higher weight)
+            let temporal_weight = 1.0 - (i as f32 / self.training_samples.len() as f32) * 0.2;
+            let final_similarity = combined_similarity * temporal_weight;
+            
+            if final_similarity > 0.6 { // Lowered threshold for better sensitivity
+                let _ = matches.push((i, final_similarity));
                 if matches.len() >= 8 {
                     break;
                 }
             }
         }
 
-        // Sort by similarity (highest first) - simple bubble sort
-        for i in 0..matches.len() {
-            for j in 0..matches.len() - 1 - i {
-                if matches[j].1 < matches[j + 1].1 {
-                    let temp = matches[j];
-                    matches[j] = matches[j + 1];
-                    matches[j + 1] = temp;
-                }
-            }
-        }
+        // Sort by similarity (highest first) using stable sort
+        self.stable_sort_by_similarity(&mut matches);
         
         matches
+    }
+    
+    /// Calculate Euclidean distance-based similarity
+    fn calculate_euclidean_similarity(&self, pattern1: &[f32], pattern2: &[f32]) -> f32 {
+        if pattern1.len() != pattern2.len() {
+            return 0.0;
+        }
+
+        let mut sum_squares = 0.0;
+        for (a, b) in pattern1.iter().zip(pattern2.iter()) {
+            let diff = a - b;
+            sum_squares += diff * diff;
+        }
+        
+        let distance = micromath::F32Ext::sqrt(sum_squares);
+        // Convert distance to similarity (0-1 range)
+        1.0 / (1.0 + distance)
+    }
+    
+    /// Calculate cosine similarity
+    fn calculate_cosine_similarity(&self, pattern1: &[f32], pattern2: &[f32]) -> f32 {
+        if pattern1.len() != pattern2.len() {
+            return 0.0;
+        }
+
+        let mut dot_product = 0.0;
+        let mut norm1 = 0.0;
+        let mut norm2 = 0.0;
+        
+        for (a, b) in pattern1.iter().zip(pattern2.iter()) {
+            dot_product += a * b;
+            norm1 += a * a;
+            norm2 += b * b;
+        }
+        
+        if norm1 == 0.0 || norm2 == 0.0 {
+            return 0.0;
+        }
+        
+        let cosine = dot_product / (micromath::F32Ext::sqrt(norm1) * micromath::F32Ext::sqrt(norm2));
+        (cosine + 1.0) / 2.0 // Normalize to 0-1 range
+    }
+    
+    /// Calculate Manhattan distance-based similarity
+    fn calculate_manhattan_similarity(&self, pattern1: &[f32], pattern2: &[f32]) -> f32 {
+        if pattern1.len() != pattern2.len() {
+            return 0.0;
+        }
+
+        let mut sum_abs_diff = 0.0;
+        for (a, b) in pattern1.iter().zip(pattern2.iter()) {
+            sum_abs_diff += (a - b).abs();
+        }
+        
+        // Convert distance to similarity
+        1.0 / (1.0 + sum_abs_diff)
+    }
+    
+    /// Stable sort matches by similarity (highest first)
+    fn stable_sort_by_similarity(&self, matches: &mut Vec<(usize, f32), 8>) {
+        // Insertion sort for stability with small arrays
+        for i in 1..matches.len() {
+            let key = matches[i];
+            let mut j = i;
+            
+            while j > 0 && matches[j - 1].1 < key.1 {
+                matches[j] = matches[j - 1];
+                j -= 1;
+            }
+            
+            matches[j] = key;
+        }
     }
 
     pub fn predict_next_pattern(&self, current_input: &[f32; MAX_PATTERN_SIZE]) -> Option<f32> {
