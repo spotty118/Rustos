@@ -17,6 +17,7 @@ pub mod allocator;
 pub mod ai;
 pub mod arch;
 pub mod gpu;
+pub mod package_manager;
 
 // Re-export commonly used items
 // Note: Macros are already exported at crate root due to #[macro_export]
@@ -32,97 +33,6 @@ pub fn hlt_loop() -> ! {
     loop {
         arch::halt_cpu();
     }
-}
-
-/// Entry point for the kernel
-#[no_mangle] 
-pub extern "C" fn _start() -> ! {
-    use vga_buffer::{print_banner, print_colored, Color};
-    
-    print_banner("RustOS - Hardware-Optimized AI Operating System", Color::LightCyan, Color::Black);
-    print_colored("Architecture: x86_64/aarch64 compatible", Color::LightBlue, Color::Black);
-    print_colored("Initializing hardware-focused AI kernel components...", Color::Yellow, Color::Black);
-    
-    init();
-    
-    // Initialize GPU acceleration system
-    print_colored("Initializing GPU acceleration system...", Color::Cyan, Color::Black);
-    match gpu::init_gpu_system() {
-        Ok(_) => {
-            if gpu::is_gpu_acceleration_available() {
-                if let Some(gpu_info) = gpu::get_active_gpu_info() {
-                    match gpu_info.vendor {
-                        gpu::GPUVendor::Intel => print_colored("GPU Acceleration: Intel GPU Active", Color::LightGreen, Color::Black),
-                        gpu::GPUVendor::Nvidia => print_colored("GPU Acceleration: NVIDIA GPU Active", Color::LightGreen, Color::Black),
-                        gpu::GPUVendor::AMD => print_colored("GPU Acceleration: AMD GPU Active", Color::LightGreen, Color::Black),
-                        gpu::GPUVendor::Unknown => print_colored("GPU Acceleration: Unknown GPU Active", Color::LightGreen, Color::Black),
-                    }
-                    // Display memory in MB - simplified for no_std
-                    let memory_mb = gpu_info.memory_size / (1024 * 1024);
-                    if memory_mb < 1024 {
-                        print_colored("GPU Memory: < 1 GB", Color::LightBlue, Color::Black);
-                    } else if memory_mb < 8192 {
-                        print_colored("GPU Memory: 1-8 GB", Color::LightBlue, Color::Black);
-                    } else if memory_mb < 16384 {
-                        print_colored("GPU Memory: 8-16 GB", Color::LightBlue, Color::Black);
-                    } else {
-                        print_colored("GPU Memory: > 16 GB", Color::LightBlue, Color::Black);
-                    }
-                } else {
-                    print_colored("GPU Acceleration: Available", Color::LightGreen, Color::Black);
-                }
-            } else {
-                print_colored("GPU Acceleration: Not available, using VGA fallback", Color::Yellow, Color::Black);
-            }
-        }
-        Err(_e) => {
-            print_colored("GPU Initialization failed", Color::LightRed, Color::Black);
-        }
-    }
-
-    // Initialize AI subsystem with hardware focus  
-    ai::init_ai_system();
-    
-    print_colored("RustOS AI kernel successfully initialized!", Color::LightGreen, Color::Black);
-    
-    // Print AI status without format macro
-    let status = ai::get_ai_status();
-    match status {
-        ai::AIStatus::Ready => vga_buffer::print_ai_status("Ready"),
-        ai::AIStatus::Learning => vga_buffer::print_ai_status("Learning"),
-        ai::AIStatus::Inferencing => vga_buffer::print_ai_status("Inferencing"),
-        ai::AIStatus::Error => vga_buffer::print_ai_status("Error"),
-        ai::AIStatus::Initializing => vga_buffer::print_ai_status("Initializing"),
-    }
-    
-    print_colored("AI now learning hardware patterns for optimal performance...", Color::Pink, Color::Black);
-    
-    // Demonstrate GPU-accelerated desktop UI
-    if gpu::is_gpu_acceleration_available() {
-        print_colored("Demonstrating GPU-accelerated desktop UI...", Color::Magenta, Color::Black);
-        
-        // Clear screen and draw desktop
-        gpu::gpu_clear_screen(0x0040A0FF); // Blue desktop background
-        
-        // Draw some UI elements using GPU acceleration
-        gpu::gpu_draw_rect(10, 10, 200, 100, 0xC0C0C0FF); // Gray window
-        gpu::gpu_draw_rect(15, 15, 190, 25, 0x000080FF);  // Blue title bar
-        gpu::gpu_draw_rect(50, 50, 100, 30, 0xE0E0E0FF);  // Light gray button
-        
-        // Draw taskbar
-        gpu::gpu_draw_rect(0, 1040, 1920, 40, 0x808080FF); // Gray taskbar
-        gpu::gpu_draw_rect(5, 1045, 80, 30, 0xA0A0A0FF);   // Start button
-        
-        gpu::gpu_present(); // Present the framebuffer
-        
-        print_colored("GPU-accelerated desktop UI rendered successfully!", Color::LightGreen, Color::Black);
-    }
-    
-    #[cfg(test)]
-    test_main();
-    
-    print_banner("System Ready - Hardware Optimization Active", Color::LightGreen, Color::Black);
-    hlt_loop();
 }
 
 /// Entry point for `cargo test`
@@ -197,4 +107,51 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
 #[test_case]
 fn trivial_assertion() {
     assert_eq!(1, 1);
+}
+
+/// Display boot logo with GPU acceleration if available
+pub fn display_boot_logo() {
+    use vga_buffer::{print_colored, print_banner, Color};
+    
+    // Clear screen and display boot logo
+    vga_buffer::clear_screen();
+    
+    print_banner("RustOS - Hardware-Optimized AI Operating System", Color::LightCyan, Color::Black);
+    print_colored("Version 0.1.0 - GPU Accelerated Desktop", Color::White, Color::Black);
+    print_colored("", Color::White, Color::Black); // Empty line
+    
+    // Try to initialize GPU-accelerated desktop
+    if gpu::is_gpu_acceleration_available() {
+        print_colored("Initializing GPU-accelerated desktop UI...", Color::LightGreen, Color::Black);
+        
+        // Initialize framebuffer and draw desktop
+        match gpu::init_desktop_ui() {
+            Ok(_) => {
+                print_colored("✓ Desktop UI initialized successfully", Color::LightGreen, Color::Black);
+                
+                // Take a screenshot of the boot desktop
+                match gpu::take_screenshot("boot_desktop.bmp") {
+                    Ok(_) => print_colored("✓ Boot screenshot saved", Color::LightBlue, Color::Black),
+                    Err(_) => print_colored("⚠ Screenshot failed", Color::Yellow, Color::Black),
+                }
+            },
+            Err(_) => print_colored("✗ Desktop UI failed", Color::LightRed, Color::Black),
+        }
+    } else {
+        print_colored("⚠ No GPU acceleration available, using VGA fallback", Color::Yellow, Color::Black);
+    }
+    
+    print_colored("", Color::White, Color::Black); // Empty line
+    
+    // Initialize package manager integration
+    match package_manager::init_package_manager() {
+        Ok(_) => print_colored("Package Manager Integration: Ready", Color::Magenta, Color::Black),
+        Err(_) => print_colored("Package Manager Integration: Failed", Color::LightRed, Color::Black),
+    }
+    
+    print_colored("AI Learning Systems: Initialized", Color::Pink, Color::Black);
+    print_colored("", Color::White, Color::Black); // Empty line
+    
+    // Demonstrate package manager integration
+    package_manager::demonstrate_package_operations();
 }

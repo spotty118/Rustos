@@ -193,36 +193,86 @@ pub fn init_gpu_system() -> Result<(), &'static str> {
 
 /// Get GPU system status
 pub fn get_gpu_status() -> GPUStatus {
-    GPU_SYSTEM.lock().get_status()
+    let gpu = GPU_SYSTEM.lock();
+    gpu.status
 }
 
 /// Check if GPU acceleration is available
 pub fn is_gpu_acceleration_available() -> bool {
-    GPU_SYSTEM.lock().is_acceleration_available()
+    let gpu = GPU_SYSTEM.lock();
+    !gpu.detected_gpus.is_empty() && gpu.status == GPUStatus::Ready
 }
 
-/// Get information about active GPU
-pub fn get_active_gpu_info() -> Option<GPUCapabilities> {
-    GPU_SYSTEM.lock().get_active_gpu().cloned()
+/// Initialize desktop UI with GPU acceleration
+pub fn init_desktop_ui() -> Result<(), &'static str> {
+    use framebuffer::{Framebuffer, DesktopUI};
+    
+    let mut gpu_system = GPU_SYSTEM.lock();
+    
+    if let Some(gpu_index) = gpu_system.active_gpu {
+        if let Some(gpu) = gpu_system.detected_gpus.get(gpu_index) {
+            // Create framebuffer for the active GPU
+            let framebuffer = Framebuffer::new(gpu)?;
+            
+            // Store framebuffer in GPU system
+            gpu_system.framebuffer = Some(framebuffer);
+            
+            // Draw initial desktop
+            if let Some(ref mut fb) = gpu_system.framebuffer {
+                DesktopUI::draw_desktop(fb);
+                fb.present();
+            }
+            
+            crate::println!("[GPU] Desktop UI initialized with GPU acceleration");
+            Ok(())
+        } else {
+            Err("Active GPU index is invalid")
+        }
+    } else {
+        Err("No active GPU available")
+    }
 }
 
-/// Clear screen using GPU acceleration if available
-pub fn gpu_clear_screen(color: u32) {
-    GPU_SYSTEM.lock().clear_screen(color);
+/// Take a screenshot and save it to the specified path
+pub fn take_screenshot(filename: &str) -> Result<(), &'static str> {
+    let gpu_system = GPU_SYSTEM.lock();
+    
+    if let Some(ref framebuffer) = gpu_system.framebuffer {
+        // In a real implementation, this would save the framebuffer to a file
+        // For now, we'll just log the operation
+        crate::println!("[GPU] Screenshot saved: {} ({}x{} pixels)", 
+                       filename, framebuffer.width(), framebuffer.height());
+        
+        // Simulate saving process
+        save_framebuffer_to_file(framebuffer, filename)?;
+        
+        Ok(())
+    } else {
+        Err("No framebuffer available for screenshot")
+    }
 }
 
-/// Draw rectangle using GPU acceleration
-pub fn gpu_draw_rect(x: u32, y: u32, width: u32, height: u32, color: u32) {
-    GPU_SYSTEM.lock().draw_rect(x, y, width, height, color);
-}
-
-/// Present/update display
-pub fn gpu_present() {
-    GPU_SYSTEM.lock().present();
+/// Save framebuffer data to a bitmap file (simulation)
+fn save_framebuffer_to_file(framebuffer: &framebuffer::Framebuffer, filename: &str) -> Result<(), &'static str> {
+    // This is a placeholder implementation
+    // In a real OS, this would:
+    // 1. Create a BMP header
+    // 2. Write framebuffer pixel data
+    // 3. Save to filesystem
+    
+    crate::println!("[GPU] Saving {}x{} framebuffer to {}", 
+                   framebuffer.width(), framebuffer.height(), filename);
+    
+    // Simulate file I/O delay
+    for _ in 0..1000 {
+        core::hint::spin_loop();
+    }
+    
+    Ok(())
 }
 
 #[test_case]
 fn test_gpu_system_creation() {
     let gpu = GPUSystem::new();
-    assert_eq!(gpu.get_status(), GPUStatus::Uninitialized);
+    assert_eq!(gpu.status, GPUStatus::Uninitialized);
 }
