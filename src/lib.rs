@@ -163,7 +163,7 @@ pub fn display_boot_logo() {
 /// Demonstrate the enhanced AI learning system with real algorithms
 pub fn demonstrate_ai_learning() {
     use vga_buffer::{print_colored, Color};
-    use ai::learning::{LearningSystem, HardwareMetrics, HardwareOptimization};
+    use ai::learning::{LearningSystem, HardwareOptimization};
     use ai::inference_engine::InferenceEngine;
     
     print_colored("", Color::White, Color::Black); // Empty line
@@ -176,20 +176,8 @@ pub fn demonstrate_ai_learning() {
         print_colored("✓ Inference engine initialized with production algorithms", Color::LightGreen, Color::Black);
     }
     
-    // Simulate realistic hardware metrics for demonstration
-    let metrics = HardwareMetrics {
-        cpu_usage: 75,          // 75% CPU usage - high but manageable
-        memory_usage: 60,       // 60% memory usage - moderate
-        io_operations: 1200,    // 1200 I/O ops/sec - active system
-        interrupt_count: 8500,  // 8500 interrupts/sec - normal load
-        context_switches: 2200, // 2200 context switches/sec - multitasking
-        cache_misses: 1500,     // 1500 cache misses/sec - good cache efficiency
-        thermal_state: 45,      // 45% thermal load - cool running
-        power_efficiency: 78,   // 78% power efficiency - good optimization
-        gpu_usage: 30,          // 30% GPU usage - light graphics load
-        gpu_memory_usage: 25,   // 25% GPU memory - plenty available
-        gpu_temperature: 55,    // 55% relative GPU temp - good cooling
-    };
+    // Collect real-time hardware metrics from the system
+    let metrics = ai::hardware_monitor::update_and_get_metrics();
     
     // Learn from hardware metrics using real adaptive algorithms
     if learning_system.learn_from_hardware_metrics(&metrics).is_ok() {
