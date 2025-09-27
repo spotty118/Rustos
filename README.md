@@ -12,20 +12,31 @@ RustOS is an experimental operating system kernel written in Rust with built-in 
 - **Enhanced VGA Display**: Colored text output with status-specific color coding
 - **Serial Communication**: UART support for debugging and communication
 - **Keyboard Input**: PS/2 keyboard driver with interrupt handling
+- **GPU Acceleration**: Hardware-accelerated desktop UI with Intel/NVIDIA/AMD support
+
+### GPU Acceleration Features
+- **Multi-Vendor GPU Support**: Intel integrated graphics, NVIDIA GeForce/RTX/Quadro, AMD Radeon series
+- **Automatic GPU Detection**: PCI bus scanning and vendor-specific initialization
+- **Hardware-Accelerated Rendering**: GPU-powered 2D graphics and framebuffer operations
+- **Desktop UI Framework**: GPU-accelerated windows, buttons, and desktop elements
+- **Framebuffer Management**: High-resolution display support up to 8K (GPU dependent)
+- **AI-GPU Integration**: GPU metrics monitoring and performance optimization
 
 ### Hardware-Focused AI Features
-- **Hardware Performance Monitor**: Real-time tracking of CPU, memory, I/O metrics
+- **Hardware Performance Monitor**: Real-time tracking of CPU, memory, I/O, and GPU metrics
 - **Neural Network Engine**: Lightweight neural network for hardware optimization
 - **Performance Pattern Recognition**: Real-time pattern detection in hardware behavior
 - **Adaptive Hardware Learning**: Continuous learning from hardware performance data
 - **Cross-Architecture Performance Counters**: Support for x86_64 RDTSC and ARM64 PMCCNTR_EL0
+- **GPU Performance Integration**: AI analysis of GPU utilization and thermal characteristics
 - **Intelligent Optimization**: AI-driven hardware performance optimization
 
 ### AI Capabilities
-- **Hardware Pattern Learning**: Learns from CPU, memory, and I/O performance patterns
+- **Hardware Pattern Learning**: Learns from CPU, memory, I/O, and GPU performance patterns
 - **Performance Prediction**: Predicts optimal hardware configurations
 - **Adaptive Resource Management**: AI-driven resource allocation based on usage patterns
 - **Intelligent Power Management**: Thermal and power efficiency optimization
+- **GPU Workload Optimization**: AI-driven GPU acceleration and memory management
 - **Real-time Hardware Decision Making**: Kernel-level AI inference for system optimization
 
 ## Architecture
@@ -34,7 +45,7 @@ RustOS is an experimental operating system kernel written in Rust with built-in 
 RustOS Hardware-Optimized AI Kernel Architecture
 
 ┌─────────────────────────────────────────────────────────────┐
-│                 User Applications                           │
+│                 Desktop UI Applications                     │
 ├─────────────────────────────────────────────────────────────┤
 │                   System Calls                             │
 ├─────────────────────────────────────────────────────────────┤
@@ -43,7 +54,8 @@ RustOS Hardware-Optimized AI Kernel Architecture
 │  │ Hardware Monitor    │   │    │ Memory Management         │ │
 │  │ Neural Network      │   │    │ Process Scheduling        │ │
 │  │ Performance Learn.  │   │    │ Interrupt Handling        │ │
-│  │ Optimization Eng.   │   │    │ Device Drivers            │ │
+│  │ GPU Integration     │   │    │ Device Drivers            │ │
+│  │ Optimization Eng.   │   │    │ GPU Subsystem             │ │
 │  └─────────────────────┘   │    └───────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
 │           Cross-Architecture Hardware Abstraction          │
@@ -53,6 +65,7 @@ RustOS Hardware-Optimized AI Kernel Architecture
 │  │ RDTSC Counters      │   │  │ PMCCNTR_EL0 Counters      │   │
 │  │ SSE/AVX Features    │   │  │ NEON/FP-ARMV8 Features    │   │
 │  │ HLT Instruction     │   │  │ WFI Instruction           │   │
+│  │ Intel/NVIDIA/AMD    │   │  │ ARM Mali/Adreno GPU       │   │
 │  └─────────────────────┘   │  └───────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -210,25 +223,39 @@ The kernel includes several built-in tests for AI components:
 When RustOS boots, you'll see output like:
 
 ```
-Welcome to RustOS - An AI-Powered Operating System!
-Initializing AI kernel components...
+Welcome to RustOS - Hardware-Optimized AI Operating System!
+Initializing hardware-focused AI kernel components...
+Initializing GPU acceleration system...
+[GPU] Scanning PCI bus for GPU devices...
+[GPU] Detected NVIDIA GPU: 9346
+[GPU] Found 1 GPU(s)
+[GPU] Initializing NVIDIA GPU for acceleration
+GPU Acceleration: NVIDIA GPU Active
+GPU Memory: 8-16 GB
 [AI] Initializing neural network...
 [AI] Initializing inference engine...
 [AI] Loading pre-trained patterns...
 [AI] AI system successfully initialized!
 RustOS AI kernel successfully initialized!
 AI inference engine status: Ready
-RustOS kernel is running...
+Demonstrating GPU-accelerated desktop UI...
+[Framebuffer] Created 1920x1080 framebuffer (RGBA8888, 8294400 bytes)
+[Framebuffer] HW Clear: 0x0040A0FF
+[Framebuffer] HW Rect: (10,10) 200x100 = 0xC0C0C0FF
+[Framebuffer] HW Rect: (15,15) 190x25 = 0x000080FF
+[Framebuffer] HW Present - GPU scanout
+GPU-accelerated desktop UI rendered successfully!
+System Ready - Hardware Optimization Active
 ```
 
-### Keyboard Learning Demo
+### GPU Acceleration Demo
 
-As you type on the keyboard, the AI system learns from your patterns:
+The system automatically detects and initializes GPU hardware:
 
 ```
-[AI] Learned new pattern from input: 1 patterns stored
-[AI] Learned new pattern from input: 2 patterns stored
-[AI] High confidence pattern detected: 0.85
+[AI] GPU utilization: 15%, Memory: 10%, Temp: 45°
+[AI] High confidence hardware pattern detected: 0.92
+[GPU] GPU acceleration enabled for desktop UI rendering
 ```
 
 ### Testing
@@ -287,18 +314,31 @@ src/
 ├── gdt.rs               # Global Descriptor Table
 ├── memory.rs            # Memory management
 ├── allocator.rs         # Heap allocator
+├── arch/                # Architecture-specific code
+│   ├── mod.rs           # Architecture abstraction
+│   ├── x86_64.rs        # x86_64 specific implementations
+│   └── aarch64.rs       # ARM64 specific implementations
+├── gpu/                 # GPU acceleration subsystem
+│   ├── mod.rs           # GPU system main module
+│   ├── intel.rs         # Intel GPU support
+│   ├── nvidia.rs        # NVIDIA GPU support
+│   ├── amd.rs           # AMD GPU support
+│   └── framebuffer.rs   # GPU-accelerated framebuffer
 └── ai/                  # AI subsystem
     ├── mod.rs           # AI system main module
     ├── neural_network.rs # Neural network implementation
     ├── inference_engine.rs # Inference and reasoning
-    └── learning.rs      # Learning algorithms
+    ├── learning.rs      # Learning algorithms
+    └── hardware_monitor.rs # Hardware performance monitoring
 ```
 
-### Adding New AI Features
+### Adding New Features
 
 1. **Neural Network Layers**: Extend the neural network architecture in `src/ai/neural_network.rs`
 2. **Inference Rules**: Add new rules to the inference engine in `src/ai/inference_engine.rs`
 3. **Learning Algorithms**: Implement new learning methods in `src/ai/learning.rs`
+4. **GPU Drivers**: Add support for new GPU vendors in `src/gpu/`
+5. **Desktop UI**: Extend the desktop UI framework in `src/gpu/framebuffer.rs`
 
 ### Debugging
 
