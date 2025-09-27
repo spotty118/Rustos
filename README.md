@@ -14,9 +14,18 @@ RustOS is an experimental operating system kernel written in Rust with built-in 
 - **Keyboard Input**: PS/2 keyboard driver with interrupt handling
 - **GPU Acceleration**: Hardware-accelerated desktop UI with Intel/NVIDIA/AMD support
 
+### Comprehensive Peripheral Driver Support
+- **Network Interface Cards**: Intel E1000/E1000E (80+ device IDs), Realtek RTL8139/RTL8169, Broadcom NetXtreme (50+ device IDs), Qualcomm Atheros WiFi (25+ device IDs) 
+- **Storage Controllers**: Intel/AMD/VIA AHCI (60+ device IDs), NVMe SSD controllers, USB Mass Storage, Legacy IDE/PATA
+- **Audio Devices**: Intel/AMD/NVIDIA HDA (70+ device IDs), VIA AC97, Creative Sound Blaster, USB Audio
+- **Input Devices**: PS/2 Keyboard/Mouse, USB HID devices, Synaptics/ALPS/Elan touchpads, Wacom digitizers
+- **USB Controllers**: EHCI (USB 2.0), UHCI (USB 1.1), xHCI (USB 3.0+) for Intel/AMD/VIA/NVIDIA (100+ device IDs)
+- **Real PCI Bus Enumeration**: Hardware detection via PCI configuration space access
+- **Hardware Initialization**: Proper device reset, DMA setup, interrupt configuration, power management
+
 ### GPU Acceleration Features
 - **Multi-Vendor GPU Support**: Intel integrated graphics, NVIDIA GeForce/RTX/Quadro, AMD Radeon series
-- **Opensource Driver Integration**: Nouveau, AMDGPU, i915 opensource driver support
+- **Opensource Driver Integration**: Nouveau, AMDGPU, i915 opensource driver support (200+ device IDs)
 - **Linux DRM/KMS Compatibility**: Direct Rendering Manager and Kernel Mode Setting support
 - **Mesa Integration**: Hardware-accelerated OpenGL through Mesa3D compatibility layer
 - **Automatic GPU Detection**: Enhanced PCI bus scanning with opensource driver prioritization
@@ -335,6 +344,14 @@ src/
 │       ├── nouveau.rs   # Nouveau (NVIDIA) driver
 │       ├── amdgpu.rs    # AMDGPU driver
 │       └── i915.rs      # Intel i915 driver
+├── peripheral/          # Comprehensive peripheral drivers
+│   ├── mod.rs           # Peripheral driver framework
+│   ├── pci.rs           # Real PCI bus enumeration
+│   ├── network.rs       # Network interface drivers
+│   ├── storage.rs       # Storage controller drivers
+│   ├── audio.rs         # Audio device drivers
+│   ├── input.rs         # Input device drivers
+│   └── usb.rs           # USB host controller drivers
 └── ai/                  # AI subsystem
     ├── mod.rs           # AI system main module
     ├── neural_network.rs # Neural network implementation
@@ -349,6 +366,11 @@ src/
 2. **Inference Rules**: Add new rules to the inference engine in `src/ai/inference_engine.rs`
 3. **Learning Algorithms**: Implement new learning methods in `src/ai/learning.rs`
 4. **GPU Drivers**: Add support for new GPU vendors in `src/gpu/` or extend opensource driver support in `src/gpu/opensource/`
+5. **Peripheral Drivers**: Add new hardware support in `src/peripheral/` for additional device types
+6. **Network Drivers**: Extend network support in `src/peripheral/network.rs` for additional NICs
+7. **Storage Drivers**: Add storage controller support in `src/peripheral/storage.rs`
+8. **Desktop UI**: Extend the desktop UI framework in `src/gpu/framebuffer.rs`
+9. **Opensource Drivers**: Add new opensource driver integrations in `src/gpu/opensource/`
 5. **Desktop UI**: Extend the desktop UI framework in `src/gpu/framebuffer.rs`
 6. **Opensource Drivers**: Add new opensource driver integrations in `src/gpu/opensource/`
 

@@ -34,6 +34,17 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
+    // Initialize comprehensive peripheral driver system
+    print_colored("Initializing comprehensive peripheral drivers...", Color::Cyan, Color::Black);
+    match rustos::peripheral::init_peripheral_drivers() {
+        Ok(_) => {
+            print_colored("Peripheral Drivers: All hardware drivers initialized", Color::LightGreen, Color::Black);
+        }
+        Err(e) => {
+            print_colored("Peripheral Drivers: Initialization failed - see details above", Color::LightRed, Color::Black);
+        }
+    }
+
     // Initialize AI subsystem with hardware focus  
     rustos::ai::init_ai_system();
     
