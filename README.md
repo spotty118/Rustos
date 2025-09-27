@@ -16,8 +16,12 @@ RustOS is an experimental operating system kernel written in Rust with built-in 
 
 ### GPU Acceleration Features
 - **Multi-Vendor GPU Support**: Intel integrated graphics, NVIDIA GeForce/RTX/Quadro, AMD Radeon series
-- **Automatic GPU Detection**: PCI bus scanning and vendor-specific initialization
-- **Hardware-Accelerated Rendering**: GPU-powered 2D graphics and framebuffer operations
+- **Opensource Driver Integration**: Nouveau, AMDGPU, i915 opensource driver support
+- **Linux DRM/KMS Compatibility**: Direct Rendering Manager and Kernel Mode Setting support
+- **Mesa Integration**: Hardware-accelerated OpenGL through Mesa3D compatibility layer
+- **Automatic GPU Detection**: Enhanced PCI bus scanning with opensource driver prioritization
+- **Advanced Graphics Features**: Hardware ray tracing, compute shaders, video decode/encode
+- **Hardware-Accelerated Rendering**: GPU-powered 2D/3D graphics and framebuffer operations
 - **Desktop UI Framework**: GPU-accelerated windows, buttons, and desktop elements
 - **Framebuffer Management**: High-resolution display support up to 8K (GPU dependent)
 - **AI-GPU Integration**: GPU metrics monitoring and performance optimization
@@ -323,7 +327,14 @@ src/
 │   ├── intel.rs         # Intel GPU support
 │   ├── nvidia.rs        # NVIDIA GPU support
 │   ├── amd.rs           # AMD GPU support
-│   └── framebuffer.rs   # GPU-accelerated framebuffer
+│   ├── framebuffer.rs   # GPU-accelerated framebuffer
+│   └── opensource/      # Opensource driver integration
+│       ├── mod.rs       # Opensource driver registry
+│       ├── drm_compat.rs # Linux DRM compatibility layer
+│       ├── mesa_compat.rs # Mesa3D compatibility layer
+│       ├── nouveau.rs   # Nouveau (NVIDIA) driver
+│       ├── amdgpu.rs    # AMDGPU driver
+│       └── i915.rs      # Intel i915 driver
 └── ai/                  # AI subsystem
     ├── mod.rs           # AI system main module
     ├── neural_network.rs # Neural network implementation
@@ -337,8 +348,9 @@ src/
 1. **Neural Network Layers**: Extend the neural network architecture in `src/ai/neural_network.rs`
 2. **Inference Rules**: Add new rules to the inference engine in `src/ai/inference_engine.rs`
 3. **Learning Algorithms**: Implement new learning methods in `src/ai/learning.rs`
-4. **GPU Drivers**: Add support for new GPU vendors in `src/gpu/`
+4. **GPU Drivers**: Add support for new GPU vendors in `src/gpu/` or extend opensource driver support in `src/gpu/opensource/`
 5. **Desktop UI**: Extend the desktop UI framework in `src/gpu/framebuffer.rs`
+6. **Opensource Drivers**: Add new opensource driver integrations in `src/gpu/opensource/`
 
 ### Debugging
 
