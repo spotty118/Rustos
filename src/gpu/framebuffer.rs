@@ -214,6 +214,27 @@ impl Framebuffer {
         }
     }
     
+    /// Read pixel data from framebuffer (for screenshots)
+    pub fn read_pixel_data(&self, x: u32, y: u32) -> [u8; 4] {
+        if x >= self.width || y >= self.height {
+            return [0, 0, 0, 255]; // Return black with full alpha for out-of-bounds
+        }
+        
+        // In a real implementation, this would read from self.buffer_address
+        // For now, we generate a test pattern based on coordinates
+        let pattern_r = ((x * 255) / self.width) as u8;
+        let pattern_g = ((y * 255) / self.height) as u8;
+        let pattern_b = ((x + y) * 128 / (self.width + self.height)) as u8;
+        let pattern_a = 255u8;
+        
+        match self.pixel_format {
+            PixelFormat::RGBA8888 => [pattern_r, pattern_g, pattern_b, pattern_a],
+            PixelFormat::BGRA8888 => [pattern_b, pattern_g, pattern_r, pattern_a],
+            PixelFormat::RGB888 => [pattern_r, pattern_g, pattern_b, 255],
+            PixelFormat::BGR888 => [pattern_b, pattern_g, pattern_r, 255],
+        }
+    }
+    
     /// Present/flush framebuffer to display
     pub fn present(&mut self) {
         if self.is_hardware_accelerated {
