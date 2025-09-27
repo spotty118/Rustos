@@ -121,8 +121,71 @@ impl fmt::Write for Writer {
 lazy_static! {
     pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer {
         column_position: 0,
-        color_code: ColorCode::new(Color::Yellow, Color::Black),
+        color_code: ColorCode::new(Color::LightGreen, Color::Black), // Changed to green for better look
         buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
+    });
+}
+
+/// Print a colored banner for system messages
+pub fn print_banner(message: &str, fg_color: Color, bg_color: Color) {
+    use core::fmt::Write;
+    use x86_64::instructions::interrupts;
+    
+    interrupts::without_interrupts(|| {
+        let mut writer = WRITER.lock();
+        let old_color = writer.color_code;
+        writer.color_code = ColorCode::new(fg_color, bg_color);
+        
+        // Print banner with borders (simplified for no_std)
+        write!(writer, "========================================\n").unwrap();
+        write!(writer, "  {}  \n", message).unwrap();
+        write!(writer, "========================================\n").unwrap();
+        
+        writer.color_code = old_color;
+    });
+}
+
+/// Print AI status with color coding
+pub fn print_ai_status(status: &str) {
+    let color = match status {
+        "Ready" => Color::LightGreen,
+        "Learning" => Color::LightBlue,
+        "Error" => Color::LightRed,
+        _ => Color::Yellow,
+    };
+    
+    print_colored_simple("[AI STATUS] ", status, color, Color::Black);
+}
+
+/// Print colored text (simplified for no_std)
+pub fn print_colored_simple(prefix: &str, message: &str, fg_color: Color, bg_color: Color) {
+    use core::fmt::Write;
+    use x86_64::instructions::interrupts;
+    
+    interrupts::without_interrupts(|| {
+        let mut writer = WRITER.lock();
+        let old_color = writer.color_code;
+        writer.color_code = ColorCode::new(fg_color, bg_color);
+        
+        write!(writer, "{}{}\n", prefix, message).unwrap();
+        
+        writer.color_code = old_color;
+    });
+}
+
+/// Print colored text
+pub fn print_colored(message: &str, fg_color: Color, bg_color: Color) {
+    use core::fmt::Write;
+    use x86_64::instructions::interrupts;
+    
+    interrupts::without_interrupts(|| {
+        let mut writer = WRITER.lock();
+        let old_color = writer.color_code;
+        writer.color_code = ColorCode::new(fg_color, bg_color);
+        
+        writeln!(writer, "{}", message).unwrap();
+        
+        writer.color_code = old_color;
     });
 }
 

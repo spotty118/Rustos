@@ -3,6 +3,26 @@ use heapless::Vec;
 const MAX_TRAINING_SAMPLES: usize = 32;
 const MAX_PATTERN_SIZE: usize = 8;
 
+#[derive(Debug, Clone, Copy)]
+pub struct HardwareMetrics {
+    pub cpu_usage: u8,           // CPU usage percentage (0-100)
+    pub memory_usage: u8,        // Memory usage percentage (0-100)
+    pub io_operations: u32,      // Number of I/O operations per second
+    pub interrupt_count: u32,    // Interrupts per second
+    pub context_switches: u32,   // Context switches per second
+    pub cache_misses: u32,       // Cache misses per second
+    pub thermal_state: u8,       // Thermal state (0-100, higher = hotter)
+    pub power_efficiency: u8,    // Power efficiency score (0-100, higher = better)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HardwareOptimization {
+    OptimalPerformance,    // High performance, higher power usage
+    BalancedMode,         // Balanced performance and power
+    PowerSaving,          // Lower performance, power efficient
+    ThermalThrottle,      // Reduce performance to manage heat
+}
+
 #[derive(Debug, Clone)]
 pub struct TrainingSample {
     pub input: [f32; MAX_PATTERN_SIZE],
@@ -55,30 +75,37 @@ impl LearningSystem {
         Ok(())
     }
 
-    pub fn learn_from_keyboard_input(&mut self, input_sequence: &[u8]) -> Result<(), &'static str> {
-        if input_sequence.len() < 2 {
-            return Ok(()); // Need at least 2 characters for learning
-        }
-
-        // Convert input sequence to training samples
-        for window in input_sequence.windows(MAX_PATTERN_SIZE + 1) {
-            if window.len() == MAX_PATTERN_SIZE + 1 {
-                let mut input_pattern = [0.0f32; MAX_PATTERN_SIZE];
-                
-                // Normalize input characters to 0-1 range
-                for (i, &byte) in window[..MAX_PATTERN_SIZE].iter().enumerate() {
-                    input_pattern[i] = (byte as f32) / 255.0;
-                }
-                
-                // Use next character as expected output
-                let expected_output = (window[MAX_PATTERN_SIZE] as f32) / 255.0;
-                
-                let sample = TrainingSample::new(input_pattern, expected_output);
-                self.add_training_sample(sample)?;
-            }
-        }
-
+    pub fn learn_from_hardware_metrics(&mut self, metrics: &HardwareMetrics) -> Result<(), &'static str> {
+        // Create training pattern from hardware metrics
+        let mut input_pattern = [0.0f32; MAX_PATTERN_SIZE];
+        
+        // Normalize hardware metrics to 0-1 range for neural network input
+        input_pattern[0] = (metrics.cpu_usage as f32) / 100.0;           // CPU usage percentage
+        input_pattern[1] = (metrics.memory_usage as f32) / 100.0;        // Memory usage percentage
+        input_pattern[2] = (metrics.io_operations as f32) / 1000.0;      // Normalized I/O ops
+        input_pattern[3] = (metrics.interrupt_count as f32) / 10000.0;   // Normalized interrupt count
+        input_pattern[4] = (metrics.context_switches as f32) / 1000.0;   // Normalized context switches
+        input_pattern[5] = (metrics.cache_misses as f32) / 10000.0;      // Normalized cache misses
+        input_pattern[6] = (metrics.thermal_state as f32) / 100.0;       // Thermal state (0-100)
+        input_pattern[7] = (metrics.power_efficiency as f32) / 100.0;    // Power efficiency (0-100)
+        
+        // Calculate expected optimization score based on current performance
+        let expected_output = self.calculate_performance_score(metrics);
+        
+        let sample = TrainingSample::new(input_pattern, expected_output);
+        self.add_training_sample(sample)?;
+        
         Ok(())
+    }
+    
+    fn calculate_performance_score(&self, metrics: &HardwareMetrics) -> f32 {
+        // Higher score for better performance (lower usage, higher efficiency)
+        let cpu_score = 1.0 - (metrics.cpu_usage as f32 / 100.0);
+        let memory_score = 1.0 - (metrics.memory_usage as f32 / 100.0);
+        let thermal_score = 1.0 - (metrics.thermal_state as f32 / 100.0);
+        let power_score = metrics.power_efficiency as f32 / 100.0;
+        
+        (cpu_score + memory_score + thermal_score + power_score) / 4.0
     }
 
     pub fn learn_pattern_recognition(&mut self, patterns: &[[f32; MAX_PATTERN_SIZE]], labels: &[f32]) -> Result<(), &'static str> {
@@ -141,20 +168,41 @@ impl LearningSystem {
         if matches.is_empty() {
             return None;
         }
-
-        // Weighted average of similar patterns
-        let mut total_weight = 0.0;
-        let mut weighted_sum = 0.0;
-
-        for (sample_idx, similarity) in matches {
-            if let Some(sample) = self.training_samples.get(sample_idx) {
-                weighted_sum += sample.expected_output * similarity * sample.weight;
-                total_weight += similarity * sample.weight;
-            }
+        
+        // Use the most similar pattern's expected output
+        let best_match_idx = matches[0].0;
+        if let Some(sample) = self.training_samples.get(best_match_idx) {
+            Some(sample.expected_output)
+        } else {
+            None
         }
+    }
 
-        if total_weight > 0.0 {
-            Some(weighted_sum / total_weight)
+    pub fn predict_hardware_optimization(&self, current_metrics: &HardwareMetrics) -> Option<HardwareOptimization> {
+        let mut input_pattern = [0.0f32; MAX_PATTERN_SIZE];
+        
+        // Convert current metrics to input pattern
+        input_pattern[0] = (current_metrics.cpu_usage as f32) / 100.0;
+        input_pattern[1] = (current_metrics.memory_usage as f32) / 100.0;
+        input_pattern[2] = (current_metrics.io_operations as f32) / 1000.0;
+        input_pattern[3] = (current_metrics.interrupt_count as f32) / 10000.0;
+        input_pattern[4] = (current_metrics.context_switches as f32) / 1000.0;
+        input_pattern[5] = (current_metrics.cache_misses as f32) / 10000.0;
+        input_pattern[6] = (current_metrics.thermal_state as f32) / 100.0;
+        input_pattern[7] = (current_metrics.power_efficiency as f32) / 100.0;
+        
+        // Find best matching pattern
+        if let Some(prediction) = self.predict_next_pattern(&input_pattern) {
+            // Convert prediction to optimization strategy
+            if prediction > 0.8 {
+                Some(HardwareOptimization::OptimalPerformance)
+            } else if prediction > 0.6 {
+                Some(HardwareOptimization::BalancedMode)
+            } else if prediction > 0.4 {
+                Some(HardwareOptimization::PowerSaving)
+            } else {
+                Some(HardwareOptimization::ThermalThrottle)
+            }
         } else {
             None
         }
