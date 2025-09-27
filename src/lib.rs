@@ -32,12 +32,40 @@ pub fn hlt_loop() -> ! {
     }
 }
 
+/// Entry point for the kernel
+#[no_mangle]
+pub extern "C" fn _start() -> ! {
+    println!("Welcome to RustOS - An AI-Powered Operating System!");
+    println!("Initializing AI kernel components...");
+    
+    init();
+    
+    // Initialize AI subsystem
+    ai::init_ai_system();
+    
+    println!("RustOS AI kernel successfully initialized!");
+    println!("AI inference engine status: {}", ai::get_ai_status());
+    
+    #[cfg(test)]
+    test_main();
+    
+    println!("RustOS kernel is running...");
+    hlt_loop();
+}
+
 /// Entry point for `cargo test`
 #[cfg(test)]
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     init();
     test_main();
+    hlt_loop();
+}
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    println!("KERNEL PANIC: {}", info);
     hlt_loop();
 }
 

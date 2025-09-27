@@ -97,16 +97,81 @@ cd Rustos
 cargo build
 ```
 
-3. Create a bootable image and run in QEMU:
+3. Create a bootable image and run in QEMU (requires bootimage tool):
 ```bash
-cargo run
+# Install bootimage tool first
+cargo install bootimage
+
+# Build bootable image
+bootimage build
+
+# Run in QEMU (install qemu-system-x86_64 first)
+qemu-system-x86_64 -drive format=raw,file=target/x86_64-unknown-none/debug/bootimage-rustos.bin
+```
+
+### Quick Build Verification
+
+To verify the kernel builds correctly:
+```bash
+cargo build
+```
+
+This should compile successfully with only minor warnings.
+
+### Testing
+
+The kernel includes several built-in tests for AI components:
+- Neural network initialization and forward pass
+- Pattern recognition and similarity matching
+- Learning system functionality
+- Inference engine rule processing
+
+## Example AI Features in Action
+
+When RustOS boots, you'll see output like:
+
+```
+Welcome to RustOS - An AI-Powered Operating System!
+Initializing AI kernel components...
+[AI] Initializing neural network...
+[AI] Initializing inference engine...
+[AI] Loading pre-trained patterns...
+[AI] AI system successfully initialized!
+RustOS AI kernel successfully initialized!
+AI inference engine status: Ready
+RustOS kernel is running...
+```
+
+### Keyboard Learning Demo
+
+As you type on the keyboard, the AI system learns from your patterns:
+
+```
+[AI] Learned new pattern from input: 1 patterns stored
+[AI] Learned new pattern from input: 2 patterns stored
+[AI] High confidence pattern detected: 0.85
 ```
 
 ### Testing
 
-Run the kernel tests:
-```bash
-cargo test
+Although no_std testing has some limitations, the core AI logic can be validated:
+
+```rust
+// Neural network test
+#[test_case]
+fn test_neural_network_creation() {
+    let mut nn = NeuralNetwork::new();
+    assert!(nn.initialize().is_ok());
+    assert_eq!(nn.layers.len(), 3);
+}
+
+// AI system test
+#[test_case]
+fn test_ai_initialization() {
+    let mut ai = AISystem::new();
+    assert!(ai.initialize().is_ok());
+    assert_eq!(ai.get_status(), AIStatus::Ready);
+}
 ```
 
 ## AI System Components

@@ -6,6 +6,7 @@ authors = ["Rustos Team"]
 description = "An experimental OS kernel written in Rust with AI built in"
 
 [lib]
+name = "rustos"
 crate-type = ["staticlib"]
 
 [dependencies]
@@ -30,12 +31,6 @@ features = ["spin_no_std"]
 
 [target.'cfg(target_os = "none")'.dependencies]
 bootloader = "0.9.23"
-
-[[bin]]
-name = "kernel"
-path = "src/main.rs"
-test = false
-bench = false
 
 [profile.dev]
 panic = "abort"
