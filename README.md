@@ -1,53 +1,59 @@
-# RustOS - An AI-Powered Operating System Kernel
+# RustOS - Hardware-Optimized AI Operating System Kernel
 
-RustOS is an experimental operating system kernel written in Rust with built-in artificial intelligence capabilities. This project demonstrates how AI can be integrated directly into the kernel layer to provide intelligent system behavior and adaptive resource management.
+RustOS is an experimental operating system kernel written in Rust with built-in artificial intelligence capabilities focused on hardware optimization. This project demonstrates how AI can be integrated directly into the kernel layer to provide intelligent hardware performance monitoring and adaptive resource management.
 
 ## Features
 
 ### Core Kernel Features
 - **No-std Rust Implementation**: Built entirely without the standard library for maximum performance
-- **x86_64 Architecture Support**: Optimized for modern 64-bit processors
+- **Cross-Architecture Support**: x86_64 and ARM64 (Apple Silicon) architecture support
 - **Memory Management**: Custom memory allocator and paging system
 - **Interrupt Handling**: Complete interrupt descriptor table (IDT) implementation
-- **VGA Text Mode**: Built-in display driver for kernel output
+- **Enhanced VGA Display**: Colored text output with status-specific color coding
 - **Serial Communication**: UART support for debugging and communication
 - **Keyboard Input**: PS/2 keyboard driver with interrupt handling
 
-### AI Integration Features
-- **Neural Network Engine**: Lightweight neural network implementation for kernel-level AI
-- **Pattern Recognition**: Real-time pattern detection in system behavior
-- **Adaptive Learning**: Continuous learning from keyboard input and system events
-- **Inference Engine**: Rule-based and neural network inference for decision making
-- **AI Status Monitoring**: Real-time AI system status and performance metrics
+### Hardware-Focused AI Features
+- **Hardware Performance Monitor**: Real-time tracking of CPU, memory, I/O metrics
+- **Neural Network Engine**: Lightweight neural network for hardware optimization
+- **Performance Pattern Recognition**: Real-time pattern detection in hardware behavior
+- **Adaptive Hardware Learning**: Continuous learning from hardware performance data
+- **Cross-Architecture Performance Counters**: Support for x86_64 RDTSC and ARM64 PMCCNTR_EL0
+- **Intelligent Optimization**: AI-driven hardware performance optimization
 
 ### AI Capabilities
-- **Keyboard Pattern Learning**: Learns from user typing patterns
-- **System Behavior Prediction**: Predicts system behavior based on learned patterns
-- **Adaptive Resource Management**: AI-driven resource allocation
-- **Intelligent Interrupt Handling**: AI-enhanced interrupt processing
-- **Real-time Decision Making**: Kernel-level AI inference for system optimization
+- **Hardware Pattern Learning**: Learns from CPU, memory, and I/O performance patterns
+- **Performance Prediction**: Predicts optimal hardware configurations
+- **Adaptive Resource Management**: AI-driven resource allocation based on usage patterns
+- **Intelligent Power Management**: Thermal and power efficiency optimization
+- **Real-time Hardware Decision Making**: Kernel-level AI inference for system optimization
 
 ## Architecture
 
 ```
-RustOS Kernel Architecture
+RustOS Hardware-Optimized AI Kernel Architecture
 
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Applications                        │
+│                 User Applications                           │
 ├─────────────────────────────────────────────────────────────┤
-│                    System Calls                            │
+│                   System Calls                             │
 ├─────────────────────────────────────────────────────────────┤
-│  AI Subsystem           │    Core Kernel                    │
-│  ┌─────────────────┐   │    ┌─────────────────────────────┐ │
-│  │ Neural Network  │   │    │ Memory Management           │ │
-│  │ Inference Eng.  │   │    │ Process Scheduling          │ │
-│  │ Learning System │   │    │ Interrupt Handling          │ │
-│  │ Pattern Recog.  │   │    │ Device Drivers              │ │
-│  └─────────────────┘   │    └─────────────────────────────┘ │
+│  Hardware AI Subsystem     │    Core Kernel                │
+│  ┌─────────────────────┐   │    ┌───────────────────────────┐ │
+│  │ Hardware Monitor    │   │    │ Memory Management         │ │
+│  │ Neural Network      │   │    │ Process Scheduling        │ │
+│  │ Performance Learn.  │   │    │ Interrupt Handling        │ │
+│  │ Optimization Eng.   │   │    │ Device Drivers            │ │
+│  └─────────────────────┘   │    └───────────────────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
-│                    Hardware Abstraction                    │
+│           Cross-Architecture Hardware Abstraction          │
 ├─────────────────────────────────────────────────────────────┤
-│                    x86_64 Hardware                         │
+│    x86_64 Hardware         │    ARM64 Hardware             │
+│  ┌─────────────────────┐   │  ┌───────────────────────────┐   │
+│  │ RDTSC Counters      │   │  │ PMCCNTR_EL0 Counters      │   │
+│  │ SSE/AVX Features    │   │  │ NEON/FP-ARMV8 Features    │   │
+│  │ HLT Instruction     │   │  │ WFI Instruction           │   │
+│  └─────────────────────┘   │  └───────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -92,12 +98,21 @@ git clone https://github.com/spotty118/Rustos.git
 cd Rustos
 ```
 
-2. Build the kernel:
+2. Build the kernel (x86_64):
 ```bash
-cargo build
+cargo build --lib
+# or use the alias
+cargo build-lib
 ```
 
-3. Create a bootable image and run in QEMU (requires bootimage tool):
+3. Build for ARM64 (partial support):
+```bash
+cargo build --lib --target aarch64-apple-rustos.json
+# or use the alias  
+cargo build-arm
+```
+
+4. Create a bootable image and run in QEMU (x86_64 only):
 ```bash
 # Install bootimage tool first
 cargo install bootimage
