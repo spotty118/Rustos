@@ -255,31 +255,49 @@ create_bootimage() {
         build_args="--release"
     fi
 
-    # Create bootimage
-    bootimage build $build_args --target "$TARGET"
-
-    local bootimage_name="bootimage-${KERNEL_NAME}.bin"
+    # Use new bootloader API for BIOS/UEFI image creation
+    print_status "Building BIOS and UEFI bootable images with bootloader_api..."
+    
+    # Build using the new bootloader crate
+    cargo build $build_args --target "$TARGET"
+    
+    # The new bootloader creates both BIOS and UEFI images
     if [ "$RELEASE" = true ]; then
-        BOOTIMAGE_PATH="$BUILD_DIR/$TARGET/release/bootimage-kernel.bin"
+        BOOTIMAGE_BIOS="$BUILD_DIR/$TARGET/release/kernel-x86_64-bios"
+        BOOTIMAGE_UEFI="$BUILD_DIR/$TARGET/release/kernel-x86_64-uefi"
+        BOOTIMAGE_PATH="$BOOTIMAGE_BIOS"  # Default to BIOS for compatibility
     else
-        BOOTIMAGE_PATH="$BUILD_DIR/$TARGET/debug/bootimage-kernel.bin"
+        BOOTIMAGE_BIOS="$BUILD_DIR/$TARGET/debug/kernel-x86_64-bios"
+        BOOTIMAGE_UEFI="$BUILD_DIR/$TARGET/debug/kernel-x86_64-uefi"
+        BOOTIMAGE_PATH="$BOOTIMAGE_BIOS"  # Default to BIOS for compatibility
     fi
 
-    if [ -f "$BOOTIMAGE_PATH" ]; then
-        print_success "Bootimage created: $BOOTIMAGE_PATH"
-
-        # Show image information
-        local size=$(ls -lh "$BOOTIMAGE_PATH" | awk '{print $5}')
-        print_status "Bootimage size: $size"
-
-        # Calculate checksum
-        if command_exists sha256sum; then
-            local checksum=$(sha256sum "$BOOTIMAGE_PATH" | cut -d' ' -f1)
-            print_status "SHA256: $checksum"
-        fi
-    else
-        print_error "Bootimage not found at: $BOOTIMAGE_PATH"
+    # Check for both BIOS and UEFI images
+    local images_created=0
+    
+    if [ -f "$BOOTIMAGE_BIOS" ]; then
+        print_success "BIOS bootimage created: $BOOTIMAGE_BIOS"
+        local size=$(ls -lh "$BOOTIMAGE_BIOS" | awk '{print $5}')
+        print_status "BIOS image size: $size"
+        images_created=$((images_created + 1))
+    fi
+    
+    if [ -f "$BOOTIMAGE_UEFI" ]; then
+        print_success "UEFI bootimage created: $BOOTIMAGE_UEFI"
+        local size=$(ls -lh "$BOOTIMAGE_UEFI" | awk '{print $5}')
+        print_status "UEFI image size: $size"
+        images_created=$((images_created + 1))
+    fi
+    
+    if [ $images_created -eq 0 ]; then
+        print_error "No bootimages found. Expected at: $BOOTIMAGE_BIOS or $BOOTIMAGE_UEFI"
         exit 1
+    fi
+    
+    # Calculate checksums if available
+    if command_exists sha256sum && [ -f "$BOOTIMAGE_PATH" ]; then
+        local checksum=$(sha256sum "$BOOTIMAGE_PATH" | cut -d' ' -f1)
+        print_status "Primary image SHA256: $checksum"
     fi
 }
 
@@ -307,16 +325,18 @@ run_qemu() {
         exit 1
     fi
 
-    print_status "Starting QEMU..."
+    print_status "Starting QEMU with bootloader_api support..."
     print_status "Press Ctrl+A, then X to exit QEMU"
     print_status "Press Ctrl+A, then C for QEMU monitor"
 
+    # Enhanced QEMU args for bootloader_api testing
     local qemu_args="-drive format=raw,file=$BOOTIMAGE_PATH"
     qemu_args="$qemu_args -serial stdio"
     qemu_args="$qemu_args -device isa-debug-exit,iobase=0xf4,iosize=0x04"
     qemu_args="$qemu_args -display gtk"
-    qemu_args="$qemu_args -m 256M"
-    qemu_args="$qemu_args -cpu qemu64"
+    qemu_args="$qemu_args -m 512M"  # Increased memory for ACPI/PCI testing
+    qemu_args="$qemu_args -cpu qemu64,+apic"  # Enable APIC for ACPI testing
+    qemu_args="$qemu_args -machine q35,accel=tcg"  # Q35 chipset with ACPI support
 
     if [[ "$TARGET" == *"x86_64"* ]]; then
         qemu-system-x86_64 $qemu_args

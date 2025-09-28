@@ -19,7 +19,9 @@ extern crate alloc;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
-use rustos::{desktop, drivers, gdt, interrupts, memory, process};
+use bootloader_api::{entry_point, BootInfo};
+use bootloader_api::info::MemoryRegionKind;
+use rustos::{acpi, desktop, drivers, gdt, interrupts, memory, process};
 
 use desktop::{
     get_desktop_status, setup_full_desktop, update_desktop, DesktopStatus,
@@ -32,16 +34,51 @@ use memory::{get_memory_stats, MemoryStats};
 // ========== BOOT AND PANIC HANDLERS ==========
 
 #[cfg(not(test))]
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
+entry_point!(kernel_entry);
+
+#[cfg(not(test))]
+fn kernel_entry(boot_info: &'static mut BootInfo) -> ! {
     // Initialize VGA buffer for early boot messages
     VGA_WRITER.lock().clear_screen();
 
     // Display boot banner
     print_banner();
 
+    // Initialize graphics subsystem from bootloader framebuffer if available
+    if let Some(framebuffer) = boot_info.framebuffer.as_mut() {
+        use bootloader_api::info::PixelFormat as BootPixelFormat;
+        use rustos::graphics;
+
+        let info = framebuffer.info().clone();
+
+        let pixel_format = match info.pixel_format {
+            BootPixelFormat::Rgb => graphics::PixelFormat::RGB888,
+            BootPixelFormat::Bgr => graphics::PixelFormat::RGB888, // fallback until RGB/BGR support diverges
+            BootPixelFormat::U8 => graphics::PixelFormat::RGB888,
+            BootPixelFormat::Unknown { .. } => graphics::PixelFormat::RGB888,
+        };
+
+        let framebuffer_info = graphics::FramebufferInfo::new(
+            info.width,
+            info.height,
+            pixel_format,
+            info.stride * info.height,
+            false,
+        );
+
+        if let Err(e) = graphics::init_from_bootloader(framebuffer.buffer_mut(), framebuffer_info)
+        {
+            println!("❌ Failed to initialize graphics subsystem: {}", e);
+        } else {
+            println!(
+                "Graphics initialized: {}x{} stride {}",
+                info.width, info.height, info.stride
+            );
+        }
+    }
+
     // Initialize basic kernel systems
-    init_kernel();
+    init_kernel(boot_info);
 
     // Try to initialize desktop environment
     match init_desktop_environment() {
@@ -271,20 +308,76 @@ fn print_banner() {
     println!();
 }
 
-fn init_kernel() {
+fn init_kernel(boot_info: &BootInfo) {
     println!("Initializing RustOS kernel...");
+
+    // Initialize ACPI subsystem before memory/PCI setup
+    init_acpi(boot_info);
 
     // Initialize interrupt handlers
     init_interrupts();
     println!("✓ Interrupt system initialized");
 
     // Initialize memory management
-    init_memory();
+    init_memory(boot_info);
     println!("✓ Memory management initialized");
 
-    // Initialize process management
+    // Initialize process management and scheduler
     init_processes();
     println!("✓ Process management initialized");
+
+    // Initialize preemptive scheduler
+    if let Err(e) = rustos::scheduler::init() {
+        println!("❌ Failed to initialize scheduler: {}", e);
+    } else {
+        println!("✓ Preemptive scheduler initialized");
+    }
+
+    // Initialize system call interface
+    if let Err(e) = rustos::syscall::init() {
+        println!("❌ Failed to initialize system calls: {}", e);
+    } else {
+        println!("✓ System call interface initialized");
+    }
+
+    // Initialize Virtual File System
+    if let Err(e) = rustos::fs::init() {
+        println!("❌ Failed to initialize VFS: {}", e);
+    } else {
+        println!("✓ Virtual File System initialized");
+        
+        // Display mount points
+        let mounts = rustos::fs::vfs().list_mounts();
+        for (path, fs_type) in mounts {
+            println!("  Mounted {} at {}", fs_type, path);
+        }
+    }
+
+    // Initialize Network Stack
+    if let Err(e) = rustos::net::init() {
+        println!("❌ Failed to initialize network stack: {}", e);
+    } else {
+        println!("✓ Network stack initialized");
+        
+        // Initialize network devices
+        if let Err(e) = rustos::net::device::init() {
+            println!("❌ Failed to initialize network devices: {}", e);
+        } else {
+            println!("✓ Network devices initialized");
+            
+            // Display network interfaces
+            let interfaces = rustos::net::network_stack().list_interfaces();
+            for interface in interfaces {
+                println!("  Interface {}: {} ({})", 
+                    interface.name, 
+                    interface.mac_address,
+                    if interface.flags.up { "UP" } else { "DOWN" });
+                for ip in &interface.ip_addresses {
+                    println!("    inet {}", ip);
+                }
+            }
+        }
+    }
 
     // Initialize AI system
     init_ai();
@@ -295,14 +388,122 @@ fn init_kernel() {
     println!("✓ GPU acceleration initialized");
 
     // Initialize PCI bus enumeration
-    init_pci_system();
+    init_pci_system(boot_info);
     println!("✓ PCI bus enumeration completed");
 
-    // Initialize drivers
-    init_drivers_main();
-    println!("✓ Device drivers initialized");
+    // Initialize drivers with enhanced hot-plug support
+    if let Err(e) = rustos::drivers::init_drivers() {
+        println!("❌ Failed to initialize drivers: {}", e);
+    } else {
+        println!("✓ Hardware drivers initialized with hot-plug support");
+    }
 
     println!("Kernel initialization complete!\n");
+}
+
+fn init_acpi(boot_info: &BootInfo) {
+    println!("Initializing ACPI subsystem...");
+
+    let rsdp = match boot_info.rsdp_addr.into_option() {
+        Some(phys) => phys,
+        None => {
+            println!("ACPI RSDP not provided by bootloader; ACPI features disabled");
+            return;
+        }
+    };
+
+    let physical_offset = boot_info.physical_memory_offset.into_option();
+
+    match acpi::init(rsdp, physical_offset) {
+        Ok(()) => {
+            println!("✓ ACPI RSDP registered at physical address 0x{:x}", rsdp);
+
+            if let Some(info) = acpi::acpi_info() {
+                if let Some(virt) = info.rsdp_virtual {
+                    println!("ACPI RSDP accessible at virtual address 0x{:x}", virt);
+                } else if info.physical_memory_offset.is_none() {
+                    println!("Physical memory offset not provided; ACPI tables remain unmapped");
+                }
+            }
+
+            match acpi::parse_rsdp() {
+                Ok(parsed) => {
+                    let oem_id = core::str::from_utf8(&parsed.oem_id)
+                        .unwrap_or("<non-ascii>")
+                        .trim_end_matches('\0');
+                    println!(
+                        "ACPI OEM: {} | Revision: {} | RSDT: 0x{:08x} | XSDT: {}",
+                        oem_id,
+                        parsed.revision,
+                        parsed.rsdt_address,
+                        parsed
+                            .xsdt_address
+                            .map(|addr| alloc::format!("0x{:016x}", addr))
+                            .unwrap_or_else(|| "<not provided>".into())
+                    );
+                }
+                Err(e) => println!("⚠️  ACPI RSDP parsing skipped: {}", e),
+            }
+
+            match acpi::enumerate_system_description_tables() {
+                Ok(tables) => {
+                    println!(
+                        "ACPI table enumeration complete: RSDT entries = {}, XSDT entries = {}",
+                        tables.rsdt_entries.len(),
+                        tables.xsdt_entries.len()
+                    );
+
+                    // Parse critical ACPI tables for hardware configuration
+                    match acpi::parse_madt() {
+                        Ok(madt) => {
+                            println!(
+                                "MADT parsed: Local APIC @ 0x{:08x}, {} processors, {} IO APICs, {} IRQ overrides",
+                                madt.local_apic_address,
+                                madt.processors.len(),
+                                madt.io_apics.len(),
+                                madt.interrupt_overrides.len()
+                            );
+                            
+                            // Log processor information for SMP support
+                            for (i, proc) in madt.processors.iter().enumerate() {
+                                let enabled = if proc.flags & 1 != 0 { "enabled" } else { "disabled" };
+                                println!("  CPU {}: APIC ID {}, {} (flags: 0x{:08x})",
+                                    i, proc.apic_id, enabled, proc.flags);
+                            }
+                        }
+                        Err(e) => println!("⚠️  MADT parsing failed: {}", e),
+                    }
+
+                    match acpi::parse_fadt() {
+                        Ok(fadt) => {
+                            println!(
+                                "FADT parsed: SCI IRQ = {:?}, PM Timer = {:?}",
+                                fadt.sci_interrupt,
+                                fadt.pm_timer_block
+                            );
+                        }
+                        Err(e) => println!("⚠️  FADT parsing failed: {}", e),
+                    }
+
+                    match acpi::parse_mcfg() {
+                        Ok(mcfg) => {
+                            println!("MCFG parsed: {} PCIe MMCONFIG entries", mcfg.entries.len());
+                            for (i, entry) in mcfg.entries.iter().enumerate() {
+                                println!(
+                                    "  Entry {}: base 0x{:016x}, segment {}, buses {}-{}",
+                                    i, entry.base_address, entry.segment_group, 
+                                    entry.start_bus, entry.end_bus
+                                );
+                            }
+                        }
+                        Err(e) => println!("⚠️  MCFG parsing failed: {}", e),
+                    }
+                }
+                Err(e) => println!("⚠️  ACPI SDT enumeration skipped: {}", e),
+            }
+        }
+        Err(e) => println!("❌ Failed to initialize ACPI subsystem: {}", e),
+    }
 }
 
 // ========== INTERRUPT HANDLING ==========
@@ -323,19 +524,45 @@ fn init_interrupts() {
 
 // ========== MEMORY MANAGEMENT ==========
 
-fn init_memory() {
+fn init_memory(boot_info: &BootInfo) {
     println!("Initializing comprehensive memory management...");
 
-    // Note: In a real bootloader environment, we would receive the memory map
-    // For this demonstration, we'll create a mock memory map
-    // In production, this would come from bootloader_api
-    static MOCK_MEMORY_MAP: &'static [u8] = &[];
+    // Summarize memory regions from bootloader
+    let mut total_usable_bytes: u64 = 0;
+    let mut total_reserved_bytes: u64 = 0;
+    for region in boot_info.memory_regions.iter() {
+        let length = region.end.saturating_sub(region.start);
+        match region.kind {
+            MemoryRegionKind::Usable => total_usable_bytes = total_usable_bytes.saturating_add(length),
+            _ => total_reserved_bytes = total_reserved_bytes.saturating_add(length),
+        }
+    }
 
-    // Initialize the comprehensive memory management system
-    // In a real kernel, memory map would come from bootloader
+    println!(
+        "Discovered memory regions -> usable: {} MB, reserved: {} MB",
+        total_usable_bytes / (1024 * 1024),
+        total_reserved_bytes / (1024 * 1024)
+    );
+
+    if let Some(offset) = boot_info.physical_memory_offset.into_option() {
+        println!(
+            "Physical memory offset mapped at virtual address: 0x{:x}",
+            offset
+        );
+    } else {
+        println!("Physical memory is not identity-mapped (no offset provided)");
+    }
+
     println!("Setting up physical memory allocator...");
     println!("Configuring virtual memory management...");
     println!("Initializing heap allocator...");
+
+    if let Err(e) = memory::init_memory_management(
+        boot_info.memory_regions.as_ref(),
+        boot_info.physical_memory_offset.into_option(),
+    ) {
+        println!("❌ Failed to initialize memory management: {}", e);
+    }
 
     // Initialize basic heap for allocation
     unsafe {
@@ -611,8 +838,17 @@ static mut DRIVER_SYSTEM: DriverSystem = DriverSystem {
 
 // ========== PCI SYSTEM INITIALIZATION ==========
 
-fn init_pci_system() {
+fn init_pci_system(boot_info: &BootInfo) {
     println!("Initializing PCI bus enumeration...");
+
+    // Provide ACPI tables (RSDP) to the PCI subsystem if available
+    rustos::pci::set_rsdp_address(boot_info.rsdp_addr.into_option());
+
+    if let Some(rsdp) = rustos::pci::rsdp_address() {
+        println!("ACPI RSDP provided at physical address 0x{:x}", rsdp);
+    } else {
+        println!("ACPI RSDP not provided by bootloader");
+    }
 
     // Initialize the PCI scanner
     match rustos::pci::init_pci() {

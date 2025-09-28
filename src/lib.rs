@@ -52,6 +52,24 @@ pub mod process;
 // PCI bus enumeration and management
 pub mod pci;
 
+// ACPI subsystem scaffolding
+pub mod acpi;
+
+// APIC (Advanced Programmable Interrupt Controller) support
+pub mod apic;
+
+// Preemptive scheduler with SMP support
+pub mod scheduler;
+
+// System call interface
+pub mod syscall;
+
+// Virtual File System
+pub mod fs;
+
+// Network stack (TCP/IP)
+pub mod net;
+
 // AI module - create a basic inference engine for the tests
 pub mod ai {
     pub mod inference_engine {

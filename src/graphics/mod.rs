@@ -7,8 +7,8 @@ pub mod framebuffer;
 
 // Re-export commonly used types and functions
 pub use framebuffer::{
-    clear_screen, draw_rect, fill_rect, framebuffer, get_info, init, present, set_pixel, Color,
-    FramebufferInfo, HardwareAcceleration, PixelFormat, Rect,
+    clear_screen, draw_rect, fill_rect, framebuffer, get_info, init, init_with_buffer, present,
+    set_pixel, Color, FramebufferInfo, HardwareAcceleration, PixelFormat, Rect,
 };
 
 use spin::{Mutex, Once};
@@ -131,6 +131,23 @@ static GRAPHICS_SYSTEM: Once<Mutex<GraphicsSystem>> = Once::new();
 pub fn init_graphics(fb_info: FramebufferInfo) -> Result<(), &'static str> {
     let mut graphics = GraphicsSystem::new();
     graphics.init(fb_info)?;
+
+    GRAPHICS_SYSTEM.call_once(|| Mutex::new(graphics));
+    Ok(())
+}
+
+/// Initialize graphics from bootloader framebuffer
+pub fn init_from_bootloader(
+    buffer: &'static mut [u8],
+    info: FramebufferInfo,
+) -> Result<(), &'static str> {
+    let mut graphics = GraphicsSystem::new();
+    graphics.status = GraphicsStatus::Initializing;
+
+    init_with_buffer(buffer, info.clone(), graphics.config.double_buffered)?;
+
+    graphics.framebuffer_info = Some(info);
+    graphics.status = GraphicsStatus::Ready;
 
     GRAPHICS_SYSTEM.call_once(|| Mutex::new(graphics));
     Ok(())

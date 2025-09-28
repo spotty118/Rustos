@@ -710,6 +710,15 @@ pub fn init(_info: FramebufferInfo, _double_buffered: bool) -> Result<(), &'stat
     Ok(())
 }
 
+/// Initialize framebuffer using an existing buffer provided by the bootloader
+pub fn init_with_buffer(
+    _buffer: &'static mut [u8],
+    info: FramebufferInfo,
+    double_buffered: bool,
+) -> Result<(), &'static str> {
+    init(info, double_buffered)
+}
+
 /// Get a reference to the global framebuffer
 pub fn framebuffer() -> Option<bool> {
     // Simplified implementation - just return whether framebuffer is initialized

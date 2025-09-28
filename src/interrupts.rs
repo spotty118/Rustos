@@ -100,8 +100,65 @@ static mut INTERRUPT_STATS: InterruptStats = InterruptStats {
 /// Initialize the interrupt system
 pub fn init() {
     IDT.load();
-    unsafe { PICS.lock().initialize() };
+    
+    // Try to initialize APIC system first
+    match crate::apic::init_apic_system() {
+        Ok(()) => {
+            println!("✓ APIC system initialized successfully");
+            
+            // Configure standard IRQs with APIC
+            if let Err(e) = configure_standard_irqs_apic() {
+                println!("⚠️  APIC IRQ configuration failed: {}, falling back to PIC", e);
+                init_legacy_pic();
+            } else {
+                println!("✓ APIC IRQ configuration completed");
+                // Disable legacy PIC when using APIC
+                disable_legacy_pic();
+            }
+        }
+        Err(e) => {
+            println!("⚠️  APIC initialization failed: {}, using legacy PIC", e);
+            init_legacy_pic();
+        }
+    }
+    
     x86_64::instructions::interrupts::enable();
+}
+
+/// Initialize legacy PIC
+fn init_legacy_pic() {
+    println!("Initializing legacy PIC (8259)");
+    unsafe { PICS.lock().initialize() };
+}
+
+/// Disable legacy PIC when using APIC
+fn disable_legacy_pic() {
+    use x86_64::instructions::port::Port;
+    
+    println!("Disabling legacy PIC");
+    unsafe {
+        // Mask all interrupts on both PICs
+        let mut pic1_data: Port<u8> = Port::new(0x21);
+        let mut pic2_data: Port<u8> = Port::new(0xA1);
+        
+        pic1_data.write(0xFF);
+        pic2_data.write(0xFF);
+    }
+}
+
+/// Configure standard IRQs using APIC
+fn configure_standard_irqs_apic() -> Result<(), &'static str> {
+    // Configure timer (IRQ 0)
+    crate::apic::configure_irq(0, InterruptIndex::Timer.as_u8(), 0)?;
+    
+    // Configure keyboard (IRQ 1)
+    crate::apic::configure_irq(1, InterruptIndex::Keyboard.as_u8(), 0)?;
+    
+    // Configure serial ports
+    crate::apic::configure_irq(4, InterruptIndex::SerialPort1.as_u8(), 0)?;
+    crate::apic::configure_irq(3, InterruptIndex::SerialPort2.as_u8(), 0)?;
+    
+    Ok(())
 }
 
 /// Get interrupt statistics
@@ -320,8 +377,13 @@ extern "x86-interrupt" fn alignment_check_handler(
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     unsafe {
         INTERRUPT_STATS.timer_count += 1;
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        
+        // Send EOI to APIC if available, otherwise use PIC
+        if crate::apic::apic_system().lock().is_initialized() {
+            crate::apic::end_of_interrupt();
+        } else {
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        }
     }
 }
 
@@ -354,8 +416,13 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
     unsafe {
         INTERRUPT_STATS.keyboard_count += 1;
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        
+        // Send EOI to APIC if available, otherwise use PIC
+        if crate::apic::apic_system().lock().is_initialized() {
+            crate::apic::end_of_interrupt();
+        } else {
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+        }
     }
 }
 
@@ -363,8 +430,13 @@ extern "x86-interrupt" fn serial_port1_interrupt_handler(_stack_frame: Interrupt
     crate::serial_println!("Serial port 1 interrupt received");
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::SerialPort1.as_u8());
+        
+        // Send EOI to APIC if available, otherwise use PIC
+        if crate::apic::apic_system().lock().is_initialized() {
+            crate::apic::end_of_interrupt();
+        } else {
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::SerialPort1.as_u8());
+        }
     }
 }
 
@@ -372,8 +444,13 @@ extern "x86-interrupt" fn serial_port2_interrupt_handler(_stack_frame: Interrupt
     crate::serial_println!("Serial port 2 interrupt received");
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::SerialPort2.as_u8());
+        
+        // Send EOI to APIC if available, otherwise use PIC
+        if crate::apic::apic_system().lock().is_initialized() {
+            crate::apic::end_of_interrupt();
+        } else {
+            PICS.lock().notify_end_of_interrupt(InterruptIndex::SerialPort2.as_u8());
+        }
     }
 }
 

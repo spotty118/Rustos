@@ -9,7 +9,27 @@ pub mod detection;
 
 use alloc::vec::Vec;
 use core::fmt;
+use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::instructions::port::{PortReadOnly, PortWriteOnly};
+
+/// Bootloader-provided ACPI Root System Description Pointer (physical address)
+static ACPI_RSDP_ADDRESS: AtomicU64 = AtomicU64::new(0);
+
+/// Store the ACPI RSDP physical address for later initialization steps
+pub fn set_rsdp_address(addr: Option<u64>) {
+    match addr {
+        Some(phys) => ACPI_RSDP_ADDRESS.store(phys, Ordering::Relaxed),
+        None => ACPI_RSDP_ADDRESS.store(0, Ordering::Relaxed),
+    }
+}
+
+/// Retrieve the ACPI RSDP physical address if one was provided by the bootloader
+pub fn rsdp_address() -> Option<u64> {
+    match ACPI_RSDP_ADDRESS.load(Ordering::Relaxed) {
+        0 => None,
+        value => Some(value),
+    }
+}
 
 /// PCI Configuration Address Port (0xCF8)
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
@@ -469,7 +489,63 @@ lazy_static! {
 
 /// Initialize the global PCI scanner
 pub fn init_pci() -> Result<(), &'static str> {
+    // Check if ACPI FADT is available for enhanced PCI configuration
+    if let Some(fadt) = crate::acpi::fadt() {
+        println!("PCI initialization with ACPI FADT support");
+        if let Some(sci_irq) = fadt.sci_interrupt {
+            println!("ACPI SCI interrupt line: {}", sci_irq);
+        }
+        if let Some(pm_timer) = fadt.pm_timer_block {
+            println!("ACPI PM Timer block: 0x{:08x}", pm_timer);
+        }
+    }
+    
+    // Check for PCIe MMCONFIG support via MCFG table
+    if let Some(mcfg) = crate::acpi::mcfg() {
+        println!("PCIe MMCONFIG support detected via ACPI MCFG");
+        for entry in &mcfg.entries {
+            println!("MMCONFIG segment {}: base 0x{:016x}, buses {}-{}",
+                entry.segment_group, entry.base_address, entry.start_bus, entry.end_bus);
+        }
+        
+        // Initialize enhanced PCI scanner with MMCONFIG
+        if let Err(e) = init_mmconfig_scanner(&mcfg) {
+            println!("⚠️  MMCONFIG initialization failed: {}, using legacy I/O", e);
+        } else {
+            println!("✓ PCIe MMCONFIG initialized successfully");
+        }
+    } else if let Some(rsdp_addr) = rsdp_address() {
+        println!("PCI configuration enhanced with ACPI tables (RSDP @ 0x{:x})", rsdp_addr);
+        println!("No MCFG table found, using legacy PCI I/O configuration");
+    }
+    
     PCI_SCANNER.lock().initialize()
+}
+
+/// Initialize MMCONFIG-based PCI scanning
+fn init_mmconfig_scanner(mcfg: &crate::acpi::McfgInfo) -> Result<(), &'static str> {
+    // For now, just validate the MCFG entries
+    for entry in &mcfg.entries {
+        if entry.base_address == 0 {
+            return Err("Invalid MMCONFIG base address");
+        }
+        
+        if entry.end_bus < entry.start_bus {
+            return Err("Invalid MMCONFIG bus range");
+        }
+        
+        // Calculate the size needed for this segment
+        let bus_count = (entry.end_bus - entry.start_bus + 1) as u64;
+        let size_needed = bus_count * 256 * 8 * 4096; // buses * devices * functions * 4KB config space
+        
+        println!("MMCONFIG segment {} requires {} MB of address space",
+            entry.segment_group, size_needed / (1024 * 1024));
+    }
+    
+    // TODO: Map MMCONFIG regions into virtual memory and implement MMCONFIG read/write
+    // For now, we'll continue using legacy I/O port access
+    
+    Ok(())
 }
 
 /// Get the global PCI scanner

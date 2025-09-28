@@ -11,11 +11,15 @@ BUILD_SCRIPT = ./build_rustos.sh
 # Build modes
 DEBUG_DIR = target/$(DEFAULT_TARGET)/debug
 RELEASE_DIR = target/$(DEFAULT_TARGET)/release
-BOOTIMAGE_DEBUG = $(DEBUG_DIR)/bootimage-kernel.bin
-BOOTIMAGE_RELEASE = $(RELEASE_DIR)/bootimage-kernel.bin
+BOOTIMAGE_DEBUG_BIOS = $(DEBUG_DIR)/kernel-x86_64-bios
+BOOTIMAGE_DEBUG_UEFI = $(DEBUG_DIR)/kernel-x86_64-uefi
+BOOTIMAGE_RELEASE_BIOS = $(RELEASE_DIR)/kernel-x86_64-bios
+BOOTIMAGE_RELEASE_UEFI = $(RELEASE_DIR)/kernel-x86_64-uefi
+BOOTIMAGE_DEBUG = $(BOOTIMAGE_DEBUG_BIOS)  # Default to BIOS for compatibility
+BOOTIMAGE_RELEASE = $(BOOTIMAGE_RELEASE_BIOS)
 
-# QEMU configuration
-QEMU_ARGS = -m 256M -serial stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
+# QEMU configuration with bootloader_api support
+QEMU_ARGS = -m 512M -serial stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04 -cpu qemu64,+apic -machine q35,accel=tcg
 QEMU_X86 = qemu-system-x86_64
 QEMU_ARM = qemu-system-aarch64
 
@@ -179,11 +183,17 @@ size: build
 	@if [ -f "$(RELEASE_DIR)/kernel" ]; then \
 		ls -lh "$(RELEASE_DIR)/kernel" | awk '{print "  Release: " $$5}'; \
 	fi
-	@if [ -f "$(BOOTIMAGE_DEBUG)" ]; then \
-		ls -lh "$(BOOTIMAGE_DEBUG)" | awk '{print "  Boot Image (Debug): " $$5}'; \
+	@if [ -f "$(BOOTIMAGE_DEBUG_BIOS)" ]; then \
+		ls -lh "$(BOOTIMAGE_DEBUG_BIOS)" | awk '{print "  Boot Image BIOS (Debug): " $$5}'; \
 	fi
-	@if [ -f "$(BOOTIMAGE_RELEASE)" ]; then \
-		ls -lh "$(BOOTIMAGE_RELEASE)" | awk '{print "  Boot Image (Release): " $$5}'; \
+	@if [ -f "$(BOOTIMAGE_DEBUG_UEFI)" ]; then \
+		ls -lh "$(BOOTIMAGE_DEBUG_UEFI)" | awk '{print "  Boot Image UEFI (Debug): " $$5}'; \
+	fi
+	@if [ -f "$(BOOTIMAGE_RELEASE_BIOS)" ]; then \
+		ls -lh "$(BOOTIMAGE_RELEASE_BIOS)" | awk '{print "  Boot Image BIOS (Release): " $$5}'; \
+	fi
+	@if [ -f "$(BOOTIMAGE_RELEASE_UEFI)" ]; then \
+		ls -lh "$(BOOTIMAGE_RELEASE_UEFI)" | awk '{print "  Boot Image UEFI (Release): " $$5}'; \
 	fi
 
 # Show kernel disassembly

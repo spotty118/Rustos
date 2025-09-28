@@ -1,9 +1,11 @@
 //! # RustOS Hardware Drivers Module
 //!
 //! This module provides a unified interface for all hardware drivers in RustOS,
-//! including graphics, input, network, and storage drivers.
+//! including graphics, input, network, and storage drivers with hot-plug support.
 
 pub mod vbe;
+pub mod pci;
+pub mod hotplug;
 
 // Removed unused imports
 use alloc::string::String;
@@ -13,6 +15,19 @@ use core::fmt;
 pub use vbe::{
     driver as vbe_driver, get_current_framebuffer_info, init as init_vbe, set_desktop_mode,
     VbeDriver, VbeStatus, VideoMode,
+};
+
+// Re-export PCI functionality
+pub use pci::{
+    init as init_pci, pci_bus, scan_devices as scan_pci_devices,
+    list_devices as list_pci_devices, get_pci_stats, PciDevice, PciAddress,
+};
+
+// Re-export hot-plug functionality
+pub use hotplug::{
+    init as init_hotplug, hotplug_manager, add_device as add_hotplug_device,
+    remove_device as remove_hotplug_device, process_events as process_hotplug_events,
+    get_hotplug_stats, HotplugDevice, HotplugEvent, DeviceState,
 };
 
 /// Driver types supported by RustOS
@@ -314,10 +329,38 @@ static mut GRAPHICS_INITIALIZED: bool = false;
 
 /// Initialize the global driver manager (simplified)
 pub fn init_drivers() -> Result<(), &'static str> {
+    // Initialize PCI subsystem
+    if let Err(e) = init_pci() {
+        println!("❌ Failed to initialize PCI: {}", e);
+        return Err("PCI initialization failed");
+    }
+
+    // Initialize hot-plug subsystem
+    if let Err(e) = init_hotplug() {
+        println!("❌ Failed to initialize hot-plug: {}", e);
+        return Err("Hot-plug initialization failed");
+    }
+
+    // Process any initial hot-plug events
+    if let Err(e) = process_hotplug_events() {
+        println!("❌ Failed to process hot-plug events: {}", e);
+    }
+
     unsafe {
         DRIVER_MANAGER_INITIALIZED = true;
         GRAPHICS_INITIALIZED = true;
     }
+
+    // Display driver statistics
+    let pci_stats = get_pci_stats();
+    let hotplug_stats = get_hotplug_stats();
+    
+    println!("✓ Driver subsystem initialized:");
+    println!("  PCI devices: {}", pci_stats.total_devices);
+    println!("  Hot-plug devices: {} ({} active)", 
+        hotplug_stats.total_devices, hotplug_stats.active_devices);
+    println!("  Devices with drivers: {}", hotplug_stats.devices_with_drivers);
+
     Ok(())
 }
 

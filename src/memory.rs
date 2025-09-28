@@ -19,10 +19,10 @@ use x86_64::{
     },
     registers::control::Cr3,
 };
-use bootloader::bootinfo::{MemoryMap, MemoryRegionType as BootloaderMemoryRegionType};
+use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::fmt;
 
@@ -216,72 +216,57 @@ impl VirtualMemoryRegion {
 
 /// Physical frame allocator with zone support
 pub struct PhysicalFrameAllocator {
-    memory_map: &'static MemoryMap,
-    next_frame: [usize; 3], // One index per zone
-    allocated_frames: [AtomicU64; 3], // Per-zone allocation counters
-    total_frames: [usize; 3], // Per-zone total frame counts
+    zone_frames: [Vec<PhysFrame>; 3],
+    allocated_frames: [AtomicU64; 3],
+    total_frames: [usize; 3],
 }
 
 impl PhysicalFrameAllocator {
-    /// Initialize the frame allocator from bootloader memory map
-    pub unsafe fn init(memory_map: &'static MemoryMap) -> Self {
-        let mut allocator = PhysicalFrameAllocator {
-            memory_map,
-            next_frame: [0; 3],
-            allocated_frames: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
-            total_frames: [0; 3],
-        };
+    /// Initialize the frame allocator from bootloader memory regions
+    pub fn init(memory_regions: &[MemoryRegion]) -> Self {
+        let mut zone_frames = [Vec::new(), Vec::new(), Vec::new()];
 
-        // Count frames per zone
-        for region in memory_map.iter() {
-            if region.region_type == BootloaderMemoryRegionType::Usable {
-                let start_addr = region.range.start_addr();
-                let end_addr = region.range.end_addr();
+        for region in memory_regions.iter().filter(|r| r.kind == MemoryRegionKind::Usable) {
+            let mut start = align_up(region.start as usize, PAGE_SIZE) as u64;
+            let end = region.end;
 
-                for addr in (start_addr..end_addr).step_by(PAGE_SIZE) {
-                    let zone = MemoryZone::from_address(PhysAddr::new(addr));
-                    let zone_idx = zone as usize;
-                    allocator.total_frames[zone_idx] += 1;
-                }
+            while start + PAGE_SIZE as u64 <= end {
+                let phys_addr = PhysAddr::new(start);
+                let zone = MemoryZone::from_address(phys_addr);
+                zone_frames[zone as usize].push(PhysFrame::containing_address(phys_addr));
+                start += PAGE_SIZE as u64;
             }
         }
 
-        allocator
-    }
+        // Reverse to allow pop() to hand out low addresses first
+        for frames in &mut zone_frames {
+            frames.sort_unstable_by_key(|frame| frame.start_address().as_u64());
+            frames.reverse();
+        }
 
-    /// Get usable frames in a specific zone
-    fn usable_frames_in_zone(&self, zone: MemoryZone) -> impl Iterator<Item = PhysFrame> {
-        let regions = self.memory_map.iter();
-        let usable_regions = regions
-            .filter(|r| r.region_type == BootloaderMemoryRegionType::Usable);
+        let total_frames = [
+            zone_frames[MemoryZone::Dma as usize].len(),
+            zone_frames[MemoryZone::Normal as usize].len(),
+            zone_frames[MemoryZone::HighMem as usize].len(),
+        ];
 
-        let zone_regions = usable_regions.filter(move |r| {
-            let start_zone = MemoryZone::from_address(PhysAddr::new(r.range.start_addr()));
-            let end_zone = MemoryZone::from_address(PhysAddr::new(r.range.end_addr() - 1));
-            start_zone == zone || end_zone == zone
-        });
-
-        let addr_ranges = zone_regions
-            .map(|r| r.range.start_addr()..r.range.end_addr());
-
-        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(PAGE_SIZE));
-
-        frame_addresses
-            .filter(move |&addr| MemoryZone::from_address(PhysAddr::new(addr)) == zone)
-            .map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+        PhysicalFrameAllocator {
+            zone_frames,
+            allocated_frames: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
+            total_frames,
+        }
     }
 
     /// Allocate a frame from a specific zone
     pub fn allocate_frame_in_zone(&mut self, zone: MemoryZone) -> Option<PhysFrame> {
         let zone_idx = zone as usize;
-        let frame = self.usable_frames_in_zone(zone).nth(self.next_frame[zone_idx]);
-
-        if frame.is_some() {
-            self.next_frame[zone_idx] += 1;
+        let frame = self.zone_frames[zone_idx].pop();
+        if let Some(frame) = frame {
             self.allocated_frames[zone_idx].fetch_add(1, Ordering::Relaxed);
+            Some(frame)
+        } else {
+            None
         }
-
-        frame
     }
 
     /// Get memory statistics for all zones
@@ -305,11 +290,11 @@ impl PhysicalFrameAllocator {
         ]
     }
 
-    /// Deallocate a frame (for future use)
-    pub fn deallocate_frame(&mut self, _frame: PhysFrame, zone: MemoryZone) {
+    /// Deallocate a frame (returns it to the free list)
+    pub fn deallocate_frame(&mut self, frame: PhysFrame, zone: MemoryZone) {
         let zone_idx = zone as usize;
         self.allocated_frames[zone_idx].fetch_sub(1, Ordering::Relaxed);
-        // TODO: Add frame to free list for reuse
+        self.zone_frames[zone_idx].push(frame);
     }
 }
 
@@ -762,9 +747,12 @@ lazy_static! {
 }
 
 /// Initialize the memory management system
-pub fn init_memory_management(memory_map: &'static MemoryMap) -> Result<(), MemoryError> {
-    // Create physical memory offset (identity mapping)
-    let physical_memory_offset = VirtAddr::new(0);
+pub fn init_memory_management(
+    memory_regions: &[MemoryRegion],
+    physical_memory_offset: Option<u64>,
+) -> Result<(), MemoryError> {
+    // Determine physical memory offset (default to zero if not provided)
+    let physical_memory_offset = VirtAddr::new(physical_memory_offset.unwrap_or(0));
 
     // Get current page table
     let level_4_table = unsafe {
@@ -779,7 +767,7 @@ pub fn init_memory_management(memory_map: &'static MemoryMap) -> Result<(), Memo
     let page_table_manager = PageTableManager::new(mapper, physical_memory_offset);
 
     // Create frame allocator
-    let frame_allocator = unsafe { PhysicalFrameAllocator::init(memory_map) };
+    let frame_allocator = PhysicalFrameAllocator::init(memory_regions);
 
     // Create memory manager
     let memory_manager = MemoryManager::new(frame_allocator, page_table_manager);
