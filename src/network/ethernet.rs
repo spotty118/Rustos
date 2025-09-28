@@ -426,7 +426,7 @@ mod tests {
     use super::*;
     use alloc::vec;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ethernet_header_creation() {
         let dest = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(header.ether_type, EtherType::Ipv4);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ethernet_header_serialization() {
         let dest = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(parsed_header.ether_type, EtherType::Ipv4);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ethernet_frame_creation() {
         let dest = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(frame.payload, payload);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_frame_validation() {
         let dest = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
@@ -475,7 +475,7 @@ mod tests {
         assert!(frame.validate().is_ok());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_broadcast_frame() {
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
         let payload = vec![0; 46];
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(frame.header.ether_type, EtherType::Arp);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ether_type_conversion() {
         assert_eq!(u16::from(EtherType::Ipv4), 0x0800);
         assert_eq!(u16::from(EtherType::Arp), 0x0806);
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(EtherType::from(0x86DDu16), EtherType::Ipv6);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_frame_processor() {
         let dest = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let src = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);

@@ -1120,7 +1120,7 @@ pub fn parse_tcp_packet(data: &[u8]) -> Result<TcpPacket, NetworkError> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_flags() {
         let mut flags = TcpFlags::new();
         flags.syn = true;
@@ -1134,7 +1134,7 @@ mod tests {
         assert_eq!(parsed_flags.rst, false);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_header_creation() {
         let header = TcpHeader::new(1234, 80, 1000, 2000);
 
@@ -1145,7 +1145,7 @@ mod tests {
         assert_eq!(header.data_offset, 5);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_header_serialization() {
         let mut header = TcpHeader::new(8080, 443, 12345, 54321);
         header.flags = TcpFlags::syn_ack();
@@ -1166,7 +1166,7 @@ mod tests {
         assert_eq!(parsed_header.flags.ack, true);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_packet_creation() {
         let packet = TcpPacket::new(
             1234,
@@ -1182,7 +1182,7 @@ mod tests {
         assert_eq!(packet.payload, b"GET / HTTP/1.1\r\n\r\n");
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_checksum() {
         let mut packet = TcpPacket::new(
             80,
@@ -1200,7 +1200,7 @@ mod tests {
         assert!(packet.verify_checksum(source_ip, dest_ip));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_socket_state_machine() {
         let mut socket = TcpSocket::new();
         let local_addr = SocketAddr::new(Ipv4Address::LOCALHOST, 8080);
@@ -1216,7 +1216,7 @@ mod tests {
         assert!(!socket.is_closed());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_congestion_control() {
         let mut cc = CongestionControl::new(TCP_DEFAULT_MSS as u32);
 
@@ -1235,7 +1235,7 @@ mod tests {
         assert!(cc.fast_recovery);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_well_known_ports() {
         assert_eq!(u16::from(TcpPort::Http), 80);
         assert_eq!(u16::from(TcpPort::Https), 443);
@@ -1243,7 +1243,7 @@ mod tests {
         assert_eq!(u16::from(TcpPort::FtpControl), 21);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tcp_state_display() {
         assert_eq!(format!("{}", TcpState::Closed), "CLOSED");
         assert_eq!(format!("{}", TcpState::Listen), "LISTEN");

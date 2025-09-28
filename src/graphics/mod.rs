@@ -408,7 +408,7 @@ mod tests {
     use super::*;
     use crate::{serial_print, serial_println, format};
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_graphics_config_default() {
         serial_print!("test_graphics_config_default... ");
         let config = GraphicsConfig::default();
@@ -420,7 +420,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_graphics_system_creation() {
         serial_print!("test_graphics_system_creation... ");
         let graphics = GraphicsSystem::new();
@@ -430,7 +430,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_graphics_status_display() {
         serial_print!("test_graphics_status_display... ");
         assert_eq!(format!("{}", GraphicsStatus::Uninitialized), "Uninitialized");

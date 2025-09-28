@@ -201,7 +201,7 @@ impl NetworkDevice for LoopbackDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65535 {
+        if mtu < 68 { // IPv4 minimum MTU
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;
@@ -333,7 +333,7 @@ impl NetworkDevice for VirtualEthernetDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65535 {
+        if mtu < 68 { // IPv4 minimum MTU
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;

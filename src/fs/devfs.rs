@@ -396,10 +396,10 @@ impl FileSystem for DevFs {
 /// Create a device node (for use by device drivers)
 pub fn create_device_node(
     name: &str,
-    device_type: DeviceType,
+    _device_type: DeviceType,
     major: u32,
     minor: u32,
-    permissions: FilePermissions,
+    _permissions: FilePermissions,
 ) -> FsResult<()> {
     // This would be called by device drivers to register new devices
     // For now, we only support the predefined devices

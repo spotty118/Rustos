@@ -305,7 +305,7 @@ pub fn window_manager() -> Option<&'static WindowManager> {
     None // Simplified - would return actual window manager
 }
 
-// Simplified test functions (without #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test] attributes to avoid no_std issues)
+// Simplified test functions (without #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test] attributes to avoid no_std issues)
 #[cfg(test)]
 mod tests {
     use super::*;
