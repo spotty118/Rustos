@@ -6,7 +6,7 @@
 use crate::println;
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
-use alloc::{vec::Vec, vec, string::String, boxed::Box};
+use alloc::{vec::Vec, vec, string::{String, ToString}, boxed::Box};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 
@@ -163,7 +163,7 @@ impl LoopbackDevice {
         Self {
             name: "lo".to_string(),
             mac_address: NetworkAddress::Mac([0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-            mtu: 65536,
+            mtu: 65535, // Maximum value for u16
             up: false,
             stats: InterfaceStats::default(),
             recv_queue: Vec::new(),
@@ -186,7 +186,7 @@ impl NetworkDevice for LoopbackDevice {
 
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities {
-            max_mtu: 65536,
+            max_mtu: 65535,
             hw_checksum: true, // Loopback doesn't need real checksums
             scatter_gather: true,
             tso: true,
@@ -201,7 +201,7 @@ impl NetworkDevice for LoopbackDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65536 {
+        if mtu > 65535 {
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;
@@ -318,7 +318,7 @@ impl NetworkDevice for VirtualEthernetDevice {
 
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities {
-            max_mtu: 65536,
+            max_mtu: 65535,
             hw_checksum: false,
             scatter_gather: true,
             tso: false,
@@ -333,7 +333,7 @@ impl NetworkDevice for VirtualEthernetDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65536 {
+        if mtu > 65535 {
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;

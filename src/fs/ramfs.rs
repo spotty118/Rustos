@@ -8,7 +8,7 @@ use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,
     DirectoryEntry, OpenFlags, FsResult, FsError, InodeNumber, get_current_time,
 };
-use alloc::{vec::Vec, string::String, collections::BTreeMap, format};
+use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap, format};
 use spin::RwLock;
 use core::cmp;
 
@@ -104,6 +104,7 @@ impl RamInode {
 }
 
 /// RAM-based filesystem
+#[derive(Debug)]
 pub struct RamFs {
     /// All inodes in the filesystem
     inodes: RwLock<BTreeMap<InodeNumber, RamInode>>,
@@ -245,6 +246,11 @@ impl FileSystem for RamFs {
 
         let mut inodes = self.inodes.write();
         
+        // Check inode limit first
+        if inodes.len() >= MAX_FILES as usize {
+            return Err(FsError::NoSpaceLeft);
+        }
+        
         // Check if parent exists and is a directory
         let parent = inodes.get_mut(&parent_inode).ok_or(FsError::NotFound)?;
         if parent.metadata.file_type != FileType::Directory {
@@ -254,11 +260,6 @@ impl FileSystem for RamFs {
         // Check if file already exists
         if parent.entries.contains_key(&filename) {
             return Err(FsError::AlreadyExists);
-        }
-
-        // Check inode limit
-        if inodes.len() >= MAX_FILES as usize {
-            return Err(FsError::NoSpaceLeft);
         }
 
         // Create new file inode
@@ -363,6 +364,11 @@ impl FileSystem for RamFs {
 
         let mut inodes = self.inodes.write();
         
+        // Check inode limit first
+        if inodes.len() >= MAX_FILES as usize {
+            return Err(FsError::NoSpaceLeft);
+        }
+        
         // Check if parent exists and is a directory
         let parent = inodes.get_mut(&parent_inode).ok_or(FsError::NotFound)?;
         if parent.metadata.file_type != FileType::Directory {
@@ -372,11 +378,6 @@ impl FileSystem for RamFs {
         // Check if directory already exists
         if parent.entries.contains_key(&dirname) {
             return Err(FsError::AlreadyExists);
-        }
-
-        // Check inode limit
-        if inodes.len() >= MAX_FILES as usize {
-            return Err(FsError::NoSpaceLeft);
         }
 
         // Create new directory inode
@@ -512,6 +513,11 @@ impl FileSystem for RamFs {
 
         let mut inodes = self.inodes.write();
         
+        // Check inode limit first
+        if inodes.len() >= MAX_FILES as usize {
+            return Err(FsError::NoSpaceLeft);
+        }
+        
         // Check if parent exists and is a directory
         let parent = inodes.get_mut(&parent_inode).ok_or(FsError::NotFound)?;
         if parent.metadata.file_type != FileType::Directory {
@@ -521,11 +527,6 @@ impl FileSystem for RamFs {
         // Check if link already exists
         if parent.entries.contains_key(&linkname) {
             return Err(FsError::AlreadyExists);
-        }
-
-        // Check inode limit
-        if inodes.len() >= MAX_FILES as usize {
-            return Err(FsError::NoSpaceLeft);
         }
 
         // Create new symlink inode

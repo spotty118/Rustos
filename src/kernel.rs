@@ -22,6 +22,7 @@ pub enum SubsystemState {
 }
 
 /// Kernel core state
+#[derive(Debug, Clone, Copy)]
 pub struct KernelCore {
     pub arch_initialized: SubsystemState,
     pub time_initialized: SubsystemState,

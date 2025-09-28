@@ -3,7 +3,6 @@
 //! This module implements a Virtual File System layer that provides:
 //! - Unified interface for different filesystem types
 //! - File and directory operations
-use crate::println;
 //! - Mount point management
 //! - File descriptor management
 //! - Path resolution and caching
@@ -12,7 +11,8 @@ pub mod vfs;
 pub mod ramfs;
 pub mod devfs;
 
-use alloc::{string::String, vec::Vec, collections::BTreeMap, format};
+use alloc::{string::{String, ToString}, vec::Vec, collections::BTreeMap, format, boxed::Box};
+use crate::println;
 use core::fmt;
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
@@ -343,7 +343,7 @@ pub enum SeekFrom {
 }
 
 /// File system trait that all filesystems must implement
-pub trait FileSystem: Send + Sync {
+pub trait FileSystem: Send + Sync + fmt::Debug {
     /// Get filesystem type
     fn fs_type(&self) -> FileSystemType;
 

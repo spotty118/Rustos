@@ -34,7 +34,7 @@ pub const PCI_HEADER_TYPE_BRIDGE: u8 = 0x01;
 pub const PCI_HEADER_TYPE_CARDBUS: u8 = 0x02;
 
 /// PCI device address
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PciAddress {
     pub bus: u8,
     pub device: u8,

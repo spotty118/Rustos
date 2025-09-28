@@ -3,6 +3,7 @@
 //! This module handles Ethernet frame parsing and generation for the network stack.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
+use alloc::vec::Vec;
 use crate::println;
 
 /// Ethernet frame header size

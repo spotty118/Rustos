@@ -4,7 +4,7 @@
 //! for path manipulation, file operations, and filesystem management.
 
 use super::{FsResult, FsError, FilePermissions, FileType, DirectoryEntry};
-use alloc::{string::String, vec::Vec, format};
+use alloc::{string::{String, ToString}, vec::Vec, format};
 
 /// Path manipulation utilities
 pub struct PathUtils;
