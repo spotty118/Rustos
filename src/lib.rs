@@ -55,6 +55,8 @@ pub mod arch;
 pub mod smp;
 pub mod security;
 pub mod kernel;
+pub mod ipc;
+pub mod demo;
 
 // PCI bus enumeration and management
 pub mod pci;
@@ -229,7 +231,7 @@ pub fn _print(args: core::fmt::Arguments) {
 #[macro_export]
 macro_rules! serial_print {
     ($($arg:tt)*) => {
-        $crate::_print(format_args!($($arg)*));
+        $crate::_print(format_args!($($arg)*))
     };
 }
 
