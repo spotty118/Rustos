@@ -416,7 +416,7 @@ pub fn stress_test_kernel() -> Result<(), &'static str> {
     // IPC stress test
     println!("IPC stress test:");
     for i in 0..10 {
-        let pipe_id = ipc::create_pipe(256)?;
+        let _pipe_id = ipc::create_pipe(256)?;
         let _mq_id = ipc::create_message_queue(5, 64)?;
         let _sem_id = ipc::create_semaphore(1, 1)?;
         

@@ -3,7 +3,7 @@
 //! This module provides basic security features including permission management,
 //! access control, and security monitoring for the kernel.
 
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap, format, vec};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;

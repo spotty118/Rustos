@@ -3,9 +3,7 @@
 //! This module implements the system call interface for RustOS, providing
 //! a standardized way for processes to request kernel services.
 
-use super::{Pid, ProcessManager, Priority, FileDescriptorType};
-use alloc::string::String;
-use alloc::vec::Vec;
+use super::{Pid, ProcessManager};
 
 /// System call numbers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

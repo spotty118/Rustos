@@ -5,7 +5,6 @@
 
 use crate::{
     arch, time, smp, security, vga_buffer,
-    memory, interrupts, gdt, process,
     serial_println, println
 };
 use spin::Mutex;
@@ -247,9 +246,9 @@ pub fn test_core_functionality() -> KernelResult<()> {
     
     // Test VGA buffer
     println!("Testing VGA buffer...");
-    let char_count_before = vga_buffer::get_char_count();
+    let _char_count_before = vga_buffer::get_char_count();
     vga_buffer::print_colored("Test message", vga_buffer::Color::LightGreen, vga_buffer::Color::Black);
-    let char_count_after = vga_buffer::get_char_count();
+    let _char_count_after = vga_buffer::get_char_count();
     // Note: char count might not change if not implemented, that's okay
     
     println!("✓ All core functionality tests completed");

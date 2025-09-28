@@ -3,7 +3,7 @@
 //! This module provides timing functionality including uptime tracking,
 //! timer interrupts, and system time management.
 
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 

@@ -3,8 +3,8 @@
 //! This module provides CPU feature detection, architecture-specific
 //! initialization, and low-level hardware access functions.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use alloc::{vec::Vec, string::{String, ToString}, format};
+use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::{string::{String, ToString}, format};
 use spin::Mutex;
 use lazy_static::lazy_static;
 

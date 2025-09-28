@@ -3,9 +3,9 @@
 //! This module provides PCI bus enumeration, device detection,
 //! and configuration space access for hot-plug support.
 
-use super::{DeviceInfo, DriverType};
-use super::hotplug::{add_device, HotplugResult, HotplugError};
-use alloc::{vec::Vec, string::String, collections::BTreeMap, format};
+use super::DeviceInfo;
+use super::hotplug::add_device;
+use alloc::{vec::Vec, collections::BTreeMap, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;

@@ -3,7 +3,7 @@
 //! This module provides multi-processor support including CPU discovery,
 //! IPI (Inter-Processor Interrupt) handling, and load balancing.
 
-use core::sync::atomic::{AtomicU32, AtomicUsize, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use alloc::{vec::Vec, collections::BTreeMap};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
