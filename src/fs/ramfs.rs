@@ -8,7 +8,7 @@ use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,
     DirectoryEntry, OpenFlags, FsResult, FsError, InodeNumber, get_current_time,
 };
-use alloc::{vec::Vec, string::String, collections::BTreeMap, format};
+use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap, format};
 use spin::RwLock;
 use core::cmp;
 
@@ -104,6 +104,7 @@ impl RamInode {
 }
 
 /// RAM-based filesystem
+#[derive(Debug)]
 pub struct RamFs {
     /// All inodes in the filesystem
     inodes: RwLock<BTreeMap<InodeNumber, RamInode>>,

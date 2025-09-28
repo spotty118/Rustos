@@ -6,7 +6,7 @@
 use crate::println;
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
-use alloc::{vec::Vec, vec, string::String, boxed::Box};
+use alloc::{vec::Vec, vec, string::{String, ToString}, boxed::Box};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 

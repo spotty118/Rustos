@@ -4,7 +4,7 @@
 //! access control, and security monitoring for the kernel.
 
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use alloc::{vec::Vec, string::String, collections::BTreeMap, format, vec};
+use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap, format, vec};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
 use crate::println;

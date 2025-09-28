@@ -9,7 +9,7 @@ use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,
     DirectoryEntry, OpenFlags, FsResult, FsError, InodeNumber, get_current_time,
 };
-use alloc::{vec::Vec, string::String, collections::BTreeMap};
+use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap};
 use spin::RwLock;
 
 /// Device types
@@ -75,6 +75,7 @@ impl DeviceNode {
 }
 
 /// Device filesystem
+#[derive(Debug)]
 pub struct DevFs {
     /// Device nodes
     devices: RwLock<BTreeMap<String, DeviceNode>>,

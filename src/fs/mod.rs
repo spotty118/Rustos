@@ -343,7 +343,7 @@ pub enum SeekFrom {
 }
 
 /// File system trait that all filesystems must implement
-pub trait FileSystem: Send + Sync {
+pub trait FileSystem: Send + Sync + fmt::Debug {
     /// Get filesystem type
     fn fs_type(&self) -> FileSystemType;
 

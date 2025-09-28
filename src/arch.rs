@@ -4,7 +4,7 @@
 //! initialization, and low-level hardware access functions.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use alloc::{vec::Vec, string::String, format};
+use alloc::{vec::Vec, string::{String, ToString}, format};
 use spin::Mutex;
 use lazy_static::lazy_static;
 

@@ -22,7 +22,7 @@ use core::fmt;
 use crate::println;
 
 /// Network address types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NetworkAddress {
     /// IPv4 address
     IPv4([u8; 4]),
@@ -199,6 +199,8 @@ pub enum NetworkError {
     AddressInUse,
     /// Permission denied
     PermissionDenied,
+    /// Invalid argument
+    InvalidArgument,
 }
 
 impl fmt::Display for NetworkError {
@@ -218,6 +220,7 @@ impl fmt::Display for NetworkError {
             NetworkError::NoRoute => write!(f, "No route to host"),
             NetworkError::AddressInUse => write!(f, "Address already in use"),
             NetworkError::PermissionDenied => write!(f, "Permission denied"),
+            NetworkError::InvalidArgument => write!(f, "Invalid argument"),
         }
     }
 }

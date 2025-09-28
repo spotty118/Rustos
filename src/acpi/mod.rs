@@ -302,8 +302,6 @@ pub fn enumerate_system_description_tables() -> Result<AcpiTables, &'static str>
                 signature: header.signature,
                 phys_addr: phys,
                 virt_addr: Some(virt),
-                length: header.length,
-                revision: header.revision,
             });
         }
     }
