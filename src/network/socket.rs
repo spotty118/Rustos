@@ -851,7 +851,7 @@ pub fn close(handle: SocketHandle) -> Result<(), NetworkError> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_creation() {
         let mut manager = SocketManager::new();
         let handle = manager
@@ -862,7 +862,7 @@ mod tests {
         assert_eq!(manager.socket_count(), 1);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_bind() {
         let mut manager = SocketManager::new();
         let handle = manager
@@ -876,7 +876,7 @@ mod tests {
         assert_eq!(info.local_addr, Some(addr));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_options() {
         let mut manager = SocketManager::new();
         let handle = manager
@@ -899,21 +899,21 @@ mod tests {
         assert_eq!(value, SocketOptionValue::Bool(true));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_types() {
         assert_eq!(format!("{}", SocketType::Stream), "STREAM");
         assert_eq!(format!("{}", SocketType::Datagram), "DGRAM");
         assert_eq!(format!("{}", SocketType::Raw), "RAW");
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_handle() {
         let handle = SocketHandle::new(42);
         assert_eq!(handle.id(), 42);
         assert_eq!(format!("{}", handle), "socket(42)");
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_stats() {
         let mut stats = SocketStats::new(1000);
         assert_eq!(stats.created_at, 1000);
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(stats.packets_received, 1);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_manager_operations() {
         let mut manager = SocketManager::new();
 
@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(handles[0], udp_handle);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_domains() {
         assert_eq!(format!("{}", SocketDomain::Inet), "AF_INET");
         assert_eq!(format!("{}", SocketDomain::Inet6), "AF_INET6");

@@ -415,7 +415,7 @@ mod tests {
     use super::*;
     use crate::{serial_print, serial_println, ToString, format};
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_driver_info_creation() {
         serial_print!("test_driver_info_creation... ");
         let driver = DriverInfo::new(
@@ -435,7 +435,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_device_info_creation() {
         serial_print!("test_device_info_creation... ");
         let device = DeviceInfo::new(
@@ -460,7 +460,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_driver_manager_creation() {
         serial_print!("test_driver_manager_creation... ");
         let manager = DriverManager::new();
@@ -471,7 +471,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_driver_types_display() {
         serial_print!("test_driver_types_display... ");
         assert_eq!(format!("{}", DriverType::Graphics), "Graphics");
@@ -480,7 +480,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_driver_status_display() {
         serial_print!("test_driver_status_display... ");
         assert_eq!(format!("{}", DriverStatus::Ready), "Ready");

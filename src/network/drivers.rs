@@ -782,7 +782,7 @@ pub fn stop_device(device_id: u32) -> Result<(), NetworkError> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_loopback_driver() {
         let mut driver = LoopbackDriver::new("lo".into());
 
@@ -800,7 +800,7 @@ mod tests {
         assert_eq!(received, test_data);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_dummy_ethernet_driver() {
         let mac = MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         let mut driver = DummyEthernetDriver::new("eth0".into(), mac);
@@ -820,7 +820,7 @@ mod tests {
         assert_eq!(stats.bytes_sent, test_data.len() as u64);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_driver_manager() {
         let mut manager = DriverManager::new();
 
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(manager.device_count(), 0);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_device_capabilities() {
         let caps = DeviceCapabilities::default();
         assert_eq!(caps.mtu, 1500);
@@ -848,14 +848,14 @@ mod tests {
         assert_eq!(caps.tx_queues, 1);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_device_state_display() {
         assert_eq!(format!("{}", DeviceState::Up), "UP");
         assert_eq!(format!("{}", DeviceState::Down), "DOWN");
         assert_eq!(format!("{}", DeviceState::Error), "ERROR");
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_device_type_display() {
         assert_eq!(format!("{}", DeviceType::Ethernet), "Ethernet");
         assert_eq!(format!("{}", DeviceType::Wireless), "Wireless");

@@ -459,7 +459,7 @@ fn get_current_pid() -> Pid {
 
 /// Get system call statistics
 pub fn get_syscall_stats() -> SyscallStats {
-    unsafe { SYSCALL_STATS.clone() }
+    unsafe { core::ptr::addr_of!(SYSCALL_STATS).read() }
 }
 
 /// User-space system call wrapper macro

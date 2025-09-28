@@ -8,7 +8,6 @@
 
 use alloc::vec::Vec as AllocVec;
 use alloc::collections::BTreeMap;
-use core::cmp::Ordering;
 use core::fmt;
 use heapless::{Vec as HeaplessVec};
 use lazy_static::lazy_static;

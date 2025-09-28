@@ -472,7 +472,7 @@ impl fmt::Display for DhcpError {
     }
 }
 
-// Test functions (simplified, without #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test] attributes)
+// Test functions (simplified, without #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test] attributes)
 #[cfg(test)]
 mod tests {
     use super::*;

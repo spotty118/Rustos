@@ -276,7 +276,7 @@ static mut PROCESS_INTEGRATION: ProcessIntegration = ProcessIntegration::new();
 
 /// Get the global process integration manager
 pub fn get_integration_manager() -> &'static mut ProcessIntegration {
-    unsafe { &mut PROCESS_INTEGRATION }
+    unsafe { &mut *core::ptr::addr_of_mut!(PROCESS_INTEGRATION) }
 }
 
 /// Initialize process integration

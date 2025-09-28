@@ -627,7 +627,7 @@ fn send_tcp_packet(
     };
 
     // Calculate checksum
-    let checksum = header.calculate_checksum(&src_ip, &dst_ip, payload);
+    let _checksum = header.calculate_checksum(&src_ip, &dst_ip, payload);
     
     println!("Sending TCP packet: {}:{} -> {}:{} (seq: {}, ack: {}, flags: {:02x})",
         src_ip, src_port, dst_ip, dst_port, sequence, acknowledgment, flags.to_byte());

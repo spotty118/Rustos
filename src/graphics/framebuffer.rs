@@ -766,7 +766,7 @@ mod tests {
     use super::*;
     use crate::{serial_print, serial_println};
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_color_conversions() {
         serial_print!("test_color_conversions... ");
         let color = Color::rgb(255, 128, 64);
@@ -778,7 +778,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_rect_operations() {
         serial_print!("test_rect_operations... ");
         let rect1 = Rect::new(10, 10, 20, 20);
@@ -792,7 +792,7 @@ mod tests {
         serial_println!("[ok]");
     }
 
-    #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_pixel_format_bytes() {
         serial_print!("test_pixel_format_bytes... ");
         assert_eq!(PixelFormat::RGBA8888.bytes_per_pixel(), 4);

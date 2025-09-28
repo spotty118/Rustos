@@ -22,7 +22,7 @@ use core::panic::PanicInfo;
 use bootloader_api::{entry_point, BootInfo};
 use bootloader_api::info::MemoryRegionKind;
 use rustos::{
-    acpi, desktop, drivers, gdt, interrupts, memory, performance_monitor, process,
+    acpi, desktop, drivers, gdt, graphics, interrupts, memory, performance_monitor, process,
 };
 
 use desktop::{
@@ -47,9 +47,16 @@ fn kernel_entry(boot_info: &'static mut BootInfo) -> ! {
     // Display boot banner
     print_banner();
 
-    // Note: Graphics initialization temporarily disabled to fix borrow checker issues
-    // This can be re-enabled once the graphics system is updated to handle lifetimes properly
-    println!("Graphics subsystem: Using text mode (graphics disabled for stability)");
+    // Try to initialize graphics system
+    match init_graphics_system() {
+        Ok(()) => {
+            println!("✅ Graphics system initialized successfully");
+        }
+        Err(e) => {
+            println!("⚠️  Graphics initialization failed: {}", e);
+            println!("   Continuing with text mode only");
+        }
+    }
 
     // Initialize basic kernel systems
     init_kernel(boot_info);
@@ -933,6 +940,51 @@ fn get_driver_stats() -> (u8, u8, u8, u16) {
             DRIVER_SYSTEM.total_devices,
         )
     }
+}
+
+// ========== GRAPHICS SYSTEM INITIALIZATION ==========
+
+fn init_graphics_system() -> Result<(), &'static str> {
+    println!("Initializing graphics system...");
+    
+    // Initialize VBE driver first
+    match drivers::vbe::init() {
+        Ok(()) => {
+            println!("✅ VBE driver initialized");
+            
+            // Try to set a suitable desktop mode
+            match drivers::vbe::set_desktop_mode(1024, 768) {
+                Ok(mode) => {
+                    println!("✅ Set video mode: {}x{} @ {} bpp", 
+                        mode.width, mode.height, mode.bits_per_pixel);
+                    
+                    // Get framebuffer info
+                    if let Some(fb_info) = drivers::vbe::get_current_framebuffer_info() {
+                        // Initialize graphics system with framebuffer
+                        match graphics::init_graphics(fb_info) {
+                            Ok(()) => {
+                                println!("✅ Graphics system ready");
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                println!("❌ Graphics system init failed: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("❌ Failed to get framebuffer info");
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to set video mode: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("❌ VBE driver initialization failed: {}", e);
+        }
+    }
+    
+    Err("Graphics initialization failed")
 }
 
 // ========== PERFORMANCE MONITORING ==========

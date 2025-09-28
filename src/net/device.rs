@@ -7,7 +7,7 @@ use crate::println;
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
 use alloc::{vec::Vec, vec, string::{String, ToString}, boxed::Box};
-use spin::{RwLock, Mutex};
+use spin::RwLock;
 use lazy_static::lazy_static;
 
 /// Network device types
@@ -201,7 +201,7 @@ impl NetworkDevice for LoopbackDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65535 {
+        if mtu < 68 { // IPv4 minimum MTU
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;
@@ -333,7 +333,7 @@ impl NetworkDevice for VirtualEthernetDevice {
     }
 
     fn set_mtu(&mut self, mtu: u16) -> NetworkResult<()> {
-        if mtu > 65535 {
+        if mtu < 68 { // IPv4 minimum MTU
             return Err(NetworkError::InvalidArgument);
         }
         self.mtu = mtu;

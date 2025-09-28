@@ -490,12 +490,12 @@ static mut CONTEXT_SWITCHER: ContextSwitcher = ContextSwitcher::new();
 
 /// Get the global context switcher
 pub fn get_context_switcher() -> &'static mut ContextSwitcher {
-    unsafe { &mut CONTEXT_SWITCHER }
+    unsafe { &mut *core::ptr::addr_of_mut!(CONTEXT_SWITCHER) }
 }
 
 /// Initialize the context switching system
 pub fn init() -> Result<(), &'static str> {
     unsafe {
-        CONTEXT_SWITCHER.init()
+        (&mut *core::ptr::addr_of_mut!(CONTEXT_SWITCHER)).init()
     }
 }

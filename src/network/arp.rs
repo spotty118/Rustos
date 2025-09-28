@@ -588,7 +588,7 @@ pub fn create_arp_response_packet(
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_arp_packet_creation() {
         let sender_mac = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let sender_ip = Ipv4Address::new(192, 168, 1, 100);
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(packet.target_hardware_addr, MacAddress::ZERO);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_arp_packet_serialization() {
         let sender_mac = MacAddress::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
         let sender_ip = Ipv4Address::new(192, 168, 1, 100);
@@ -628,7 +628,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_arp_table() {
         let mut table = ArpTable::new(300, 100);
         let ip = Ipv4Address::new(192, 168, 1, 1);
@@ -642,7 +642,7 @@ mod tests {
         assert_eq!(table.lookup(ip, 2000), None);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_arp_processor() {
         let our_mac = MacAddress::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
         let our_ip = Ipv4Address::new(192, 168, 1, 100);
@@ -662,7 +662,7 @@ mod tests {
         assert_eq!(response.target_hardware_addr, sender_mac);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_arp_operations() {
         assert_eq!(u16::from(ArpOperation::Request), 1);
         assert_eq!(u16::from(ArpOperation::Response), 2);
@@ -670,7 +670,7 @@ mod tests {
         assert_eq!(ArpOperation::from(2u16), ArpOperation::Response);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_hardware_types() {
         assert_eq!(u16::from(ArpHardwareType::Ethernet), 1);
         assert_eq!(ArpHardwareType::from(1u16), ArpHardwareType::Ethernet);

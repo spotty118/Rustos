@@ -871,7 +871,7 @@ impl Default for Ipv4Processor {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ipv4_header_creation() {
         let source = Ipv4Address::new(192, 168, 1, 100);
         let dest = Ipv4Address::new(192, 168, 1, 1);
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(header.total_length, 20 + 1024);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ipv4_header_serialization() {
         let source = Ipv4Address::new(10, 0, 0, 1);
         let dest = Ipv4Address::new(10, 0, 0, 2);
@@ -900,7 +900,7 @@ mod tests {
         assert!(parsed_header.verify_checksum());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_routing_table() {
         let mut table = RoutingTable::new();
 
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(route2.network, Ipv4Address::UNSPECIFIED); // Default route
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_packet_fragmentation() {
         let source = Ipv4Address::new(192, 168, 1, 1);
         let dest = Ipv4Address::new(192, 168, 1, 2);
@@ -956,7 +956,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_checksum_calculation() {
         let source = Ipv4Address::new(192, 168, 1, 1);
         let dest = Ipv4Address::new(192, 168, 1, 2);
@@ -972,7 +972,7 @@ mod tests {
         assert!(!corrupted_header.verify_checksum());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_route_matching() {
         let route = RouteEntry::new(
             Ipv4Address::new(192, 168, 0, 0),
@@ -988,7 +988,7 @@ mod tests {
         assert!(!route.matches(Ipv4Address::new(10, 0, 0, 1)));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_protocol_conversions() {
         assert_eq!(u8::from(IpProtocol::Tcp), 6);
         assert_eq!(u8::from(IpProtocol::Udp), 17);
@@ -999,7 +999,7 @@ mod tests {
         assert_eq!(IpProtocol::from(1u8), IpProtocol::Icmp);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_tos_flags() {
         let mut tos = TypeOfService::new();
         tos.low_delay = true;
@@ -1015,7 +1015,7 @@ mod tests {
         assert_eq!(parsed_tos.high_reliability, false);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_fragment_flags() {
         let mut flags = IpFlags::new();
         flags.dont_fragment = true;

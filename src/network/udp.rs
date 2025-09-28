@@ -644,7 +644,7 @@ pub fn parse_udp_packet(data: &[u8]) -> Result<UdpPacket, NetworkError> {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_header_creation() {
         let header = UdpHeader::new(1234, 5678, 100);
 
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(header.checksum, 0);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_header_serialization() {
         let header = UdpHeader::new(80, 8080, 50);
         let bytes = header.to_bytes();
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(parsed_header.checksum, header.checksum);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_packet_creation() {
         let payload = b"Hello, UDP!".to_vec();
         let packet = UdpPacket::new(1234, 5678, payload.clone());
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(packet.payload, payload);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_packet_serialization() {
         let payload = b"Test data".to_vec();
         let packet = UdpPacket::new(2000, 3000, payload.clone());
@@ -693,7 +693,7 @@ mod tests {
         assert_eq!(parsed_packet.payload, packet.payload);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_checksum() {
         let mut packet = UdpPacket::new(53, 12345, b"DNS query".to_vec());
         let source_ip = Ipv4Address::new(192, 168, 1, 100);
@@ -707,7 +707,7 @@ mod tests {
         assert!(!packet.verify_checksum(source_ip, dest_ip));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_socket() {
         let mut socket = UdpSocket::new();
         let addr = SocketAddr::new(Ipv4Address::LOCALHOST, 8080);
@@ -724,7 +724,7 @@ mod tests {
         assert_eq!(socket.remote_addr(), Some(remote_addr));
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_port_manager() {
         let mut manager = UdpPortManager::new();
 
@@ -743,7 +743,7 @@ mod tests {
         assert!(manager.bind_port(8080, false).is_ok());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_udp_processor() {
         let mut processor = UdpProcessor::new();
 
@@ -764,7 +764,7 @@ mod tests {
         assert_eq!(processor.socket_count(), 0);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_well_known_ports() {
         assert_eq!(u16::from(UdpPort::Dns), 53);
         assert_eq!(u16::from(UdpPort::DhcpServer), 67);
@@ -772,7 +772,7 @@ mod tests {
         assert_eq!(u16::from(UdpPort::Ntp), 123);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_packet_validation() {
         // Test invalid header length
         let mut header = UdpHeader::new(1234, 5678, 100);

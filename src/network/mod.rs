@@ -522,7 +522,7 @@ pub fn is_network_available() -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_ipv4_address() {
         let addr = Ipv4Address::new(192, 168, 1, 1);
         assert_eq!(addr.to_bytes(), [192, 168, 1, 1]);
@@ -530,7 +530,7 @@ mod tests {
         assert!(!addr.is_multicast());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_mac_address() {
         let mac = MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         assert!(!mac.is_broadcast());
@@ -540,14 +540,14 @@ mod tests {
         assert!(broadcast.is_broadcast());
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_socket_addr() {
         let addr = SocketAddr::new(Ipv4Address::LOCALHOST, 8080);
         assert_eq!(addr.port, 8080);
         assert_eq!(addr.ip, Ipv4Address::LOCALHOST);
     }
 
-    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[test]
+    #[cfg(feature = "std-tests")] // Disabled: #[cfg(feature = "disabled-tests")] // #[cfg(feature = "disabled-tests")] // #[test]
     fn test_network_config() {
         let config = NetworkConfig::default();
         assert_eq!(config.hostname, "rustos");
