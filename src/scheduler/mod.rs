@@ -562,7 +562,7 @@ fn get_system_time() -> u64 {
 }
 
 /// Context switch between processes (assembly stub)
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn context_switch(old_state: *mut CpuState, new_state: *const CpuState) {
     core::arch::asm!(
         // Save current context

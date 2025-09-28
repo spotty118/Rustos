@@ -11,7 +11,7 @@ pub mod vfs;
 pub mod ramfs;
 pub mod devfs;
 
-use alloc::{string::String, vec::Vec, collections::BTreeMap};
+use alloc::{string::String, vec::Vec, collections::BTreeMap, format};
 use core::fmt;
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;

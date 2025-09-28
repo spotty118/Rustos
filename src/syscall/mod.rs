@@ -483,7 +483,6 @@ macro_rules! syscall {
                 "mov r8, {arg5}",
                 "mov r9, {arg6}",
                 "int 0x80",
-                "mov {result}, rax",
                 num = in(reg) $num,
                 arg1 = in(reg) $arg1,
                 arg2 = in(reg) $arg2,
@@ -491,8 +490,8 @@ macro_rules! syscall {
                 arg4 = in(reg) $arg4,
                 arg5 = in(reg) $arg5,
                 arg6 = in(reg) $arg6,
-                result = out(reg) result,
-                clobber_abi("C")
+                lateout("rax") result,
+                options(preserves_flags)
             );
         }
         result

@@ -5,7 +5,7 @@
 //! wireless, loopback, and virtual devices.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
-use alloc::{vec::Vec, string::String, boxed::Box};
+use alloc::{vec::Vec, vec, string::String, boxed::Box};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 

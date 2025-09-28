@@ -5,10 +5,11 @@
 
 use super::{DeviceInfo, DriverType};
 use super::hotplug::{add_device, HotplugResult, HotplugError};
-use alloc::{vec::Vec, string::String, collections::BTreeMap};
+use alloc::{vec::Vec, string::String, collections::BTreeMap, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
+use crate::println;
 
 /// PCI configuration space registers
 pub const PCI_VENDOR_ID: u8 = 0x00;

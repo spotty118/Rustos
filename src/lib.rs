@@ -19,6 +19,7 @@ pub use alloc::collections::BTreeMap;
 pub use alloc::string::String;
 pub use alloc::string::ToString;
 pub use alloc::vec::Vec;
+pub use alloc::{vec, format};
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -216,9 +217,6 @@ pub fn _print(args: core::fmt::Arguments) {
         .write_fmt(args)
         .expect("Printing to serial failed");
 }
-
-// Re-export alloc macros for modules
-pub use alloc::{format, vec};
 
 // Note: Tests in this codebase use #[cfg(feature = "disabled-tests")] // #[test] attribute with custom test framework
 
