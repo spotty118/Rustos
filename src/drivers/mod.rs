@@ -10,6 +10,7 @@ pub mod hotplug;
 // Removed unused imports
 use alloc::string::String;
 use core::fmt;
+use crate::println;
 
 // Re-export VBE driver functionality
 pub use vbe::{

@@ -235,6 +235,11 @@ macro_rules! serial_println {
 }
 
 #[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::serial_print!($($arg)*));
+}
+
+#[macro_export]
 macro_rules! println {
     () => ($crate::serial_println!());
     ($fmt:expr) => ($crate::serial_println!($fmt));

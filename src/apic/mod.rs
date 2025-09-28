@@ -3,6 +3,7 @@
 //! This module implements Local APIC and IO APIC configuration using ACPI MADT data.
 //! It provides modern interrupt handling capabilities beyond the legacy PIC.
 
+use crate::println;
 use core::ptr;
 use x86_64::{PhysAddr, VirtAddr};
 use crate::acpi::{MadtInfo, IoApic as AcpiIoApic, InterruptOverride};

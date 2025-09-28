@@ -3,6 +3,7 @@
 //! This module handles Internet Protocol packet parsing, routing, and forwarding.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack, Protocol};
+use crate::println;
 use alloc::vec::Vec;
 
 /// IPv4 header minimum size

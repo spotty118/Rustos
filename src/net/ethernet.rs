@@ -3,6 +3,7 @@
 //! This module handles Ethernet frame parsing and generation for the network stack.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
+use crate::println;
 
 /// Ethernet frame header size
 pub const ETHERNET_HEADER_SIZE: usize = 14;

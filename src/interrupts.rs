@@ -10,6 +10,7 @@ use spin::Mutex;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use x86_64::VirtAddr;
+use crate::println;
 
 /// Hardware interrupt offsets for the PIC (Programmable Interrupt Controller)
 pub const PIC_1_OFFSET: u8 = 32;

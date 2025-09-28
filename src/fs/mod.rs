@@ -3,6 +3,7 @@
 //! This module implements a Virtual File System layer that provides:
 //! - Unified interface for different filesystem types
 //! - File and directory operations
+use crate::println;
 //! - Mount point management
 //! - File descriptor management
 //! - Path resolution and caching

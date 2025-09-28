@@ -3,6 +3,7 @@
 //! This module provides a complete TCP stack with connection management,
 //! flow control, congestion control, and reliable data transmission.
 
+use crate::println;
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
 use alloc::{vec::Vec, collections::BTreeMap};
 use spin::RwLock;

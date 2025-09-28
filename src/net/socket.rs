@@ -3,6 +3,7 @@
 //! This module provides the socket abstraction layer for network communication,
 //! supporting TCP, UDP, and raw sockets with a POSIX-like interface.
 
+use crate::println;
 use super::{NetworkAddress, Protocol, NetworkError, NetworkResult, PacketBuffer};
 use alloc::{vec::Vec, collections::VecDeque};
 use core::fmt;

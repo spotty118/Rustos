@@ -3,6 +3,7 @@
 //! This module provides an abstraction layer for network devices,
 //! supporting various types of network interfaces including Ethernet,
 //! wireless, loopback, and virtual devices.
+use crate::println;
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
 use alloc::{vec::Vec, vec, string::String, boxed::Box};
