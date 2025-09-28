@@ -141,6 +141,14 @@ pub struct McfgInfo {
     pub entries: Vec<McfgEntry>,
 }
 
+/// MADT (Multiple APIC Description Table) header structure
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct MadtHeader {
+    pub local_apic_address: u32,
+    pub flags: u32,
+}
+
 lazy_static! {
     static ref ACPI_STATE: RwLock<Option<AcpiInfo>> = RwLock::new(None);
 }
@@ -615,76 +623,38 @@ unsafe fn parse_mcfg_from_address(virt_addr: usize, table_length: usize) -> Resu
             break;
         }
 
-        let entry_type = entries_data[entry_offset];
-        let entry_length = entries_data[entry_offset + 1] as usize;
+        // Parse MCFG entry - each entry is 16 bytes:
+        // - 8 bytes: Base address
+        // - 2 bytes: PCI segment group number  
+        // - 1 byte: Start bus number
+        // - 1 byte: End bus number
+        // - 4 bytes: Reserved
+        let base_address = u64::from_le_bytes([
+            entries_data[entry_offset],
+            entries_data[entry_offset + 1],
+            entries_data[entry_offset + 2],
+            entries_data[entry_offset + 3],
+            entries_data[entry_offset + 4],
+            entries_data[entry_offset + 5],
+            entries_data[entry_offset + 6],
+            entries_data[entry_offset + 7],
+        ]);
 
-        match entry_type {
-            MADT_ENTRY_PROCESSOR if entry_length >= MADT_PROCESSOR_LEN => {
-                let processor_id = entries_data[entry_offset + 2];
-                let apic_id = entries_data[entry_offset + 3];
-                let flags = u32::from_le_bytes([
-                    entries_data[entry_offset + 4],
-                    entries_data[entry_offset + 5],
-                    entries_data[entry_offset + 6],
-                    entries_data[entry_offset + 7],
-                ]);
+        let segment_group = u16::from_le_bytes([
+            entries_data[entry_offset + 8],
+            entries_data[entry_offset + 9],
+        ]);
 
-                info.processors.push(ProcessorInfo {
-                    processor_id,
-                    apic_id,
-                    flags,
-                });
-            }
-            MADT_ENTRY_IO_APIC if entry_length >= MADT_IO_APIC_LEN => {
-                let id = entries_data[entry_offset + 2];
-                let address = u32::from_le_bytes([
-                    entries_data[entry_offset + 4],
-                    entries_data[entry_offset + 5],
-                    entries_data[entry_offset + 6],
-                    entries_data[entry_offset + 7],
-                ]);
+        let start_bus = entries_data[entry_offset + 10];
+        let end_bus = entries_data[entry_offset + 11];
 
-                let si_base = u32::from_le_bytes([
-                    entries_data[entry_offset + 8],
-                    entries_data[entry_offset + 9],
-                    entries_data[entry_offset + 10],
-                    entries_data[entry_offset + 11],
-                ]);
-
-                info.io_apics.push(IoApic {
-                    id,
-                    address,
-                    global_system_interrupt_base: si_base,
-                });
-            }
-            MADT_ENTRY_INTERRUPT_OVERRIDE if entry_length >= MADT_INTERRUPT_OVERRIDE_LEN => {
-                let bus_source = entries_data[entry_offset + 2];
-                let irq_source = entries_data[entry_offset + 3];
-                let si = u32::from_le_bytes([
-                    entries_data[entry_offset + 4],
-                    entries_data[entry_offset + 5],
-                    entries_data[entry_offset + 6],
-                    entries_data[entry_offset + 7],
-                ]);
-
-                let flags = u16::from_le_bytes([
-                    entries_data[entry_offset + 8],
-                    entries_data[entry_offset + 9],
-                ]);
-
-                info.interrupt_overrides.push(InterruptOverride {
-                    bus_source,
-                    irq_source,
-                    global_system_interrupt: si,
-                    flags,
-                });
-            }
-            _ => {}
-        }
+        entries.push(McfgEntry {
+            base_address,
+            segment_group,
+            start_bus,
+            end_bus,
+        });
     }
 
-    // For now, return empty MCFG info since this function is incomplete
-    Ok(McfgInfo {
-        entries: Vec::new(),
-    })
+    Ok(McfgInfo { entries })
 }

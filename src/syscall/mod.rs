@@ -3,7 +3,6 @@
 //! This module implements the system call interface that allows user-space
 //! programs to request services from the kernel. It includes:
 //! - System call dispatch mechanism
-use crate::println;
 //! - User/kernel mode switching
 //! - Parameter validation and copying
 //! - Security checks and capabilities
@@ -11,6 +10,7 @@ use crate::println;
 use core::arch::asm;
 use x86_64::structures::idt::InterruptStackFrame;
 use crate::scheduler::{Pid, Priority};
+use crate::println;
 
 /// System call numbers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

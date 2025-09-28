@@ -21,7 +21,7 @@ pub type Pid = u32;
 pub type Tid = u64;
 
 /// CPU ID type
-pub type CpuId = u8;
+pub type CpuId = u32;
 
 /// Process priority levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -547,19 +547,14 @@ pub fn get_scheduler_stats() -> SchedulerStats {
     GLOBAL_SCHEDULER.get_stats()
 }
 
-/// Get current CPU ID (placeholder implementation)
+/// Get current CPU ID (production implementation)
 fn get_current_cpu_id() -> CpuId {
-    // TODO: Implement proper CPU ID detection
-    // For now, return CPU 0
-    0
+    crate::smp::current_cpu()
 }
 
-/// Get system time in microseconds (placeholder implementation)
+/// Get system time in microseconds (production implementation)
 fn get_system_time() -> u64 {
-    // TODO: Implement proper system time
-    // For now, return a placeholder value
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1000, Ordering::SeqCst)
+    crate::time::current_time_ms() * 1000 // Convert ms to microseconds
 }
 
 /// Context switch between processes (assembly stub)

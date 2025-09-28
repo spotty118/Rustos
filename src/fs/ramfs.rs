@@ -245,6 +245,11 @@ impl FileSystem for RamFs {
 
         let mut inodes = self.inodes.write();
         
+        // Check inode limit first
+        if inodes.len() >= MAX_FILES as usize {
+            return Err(FsError::NoSpaceLeft);
+        }
+        
         // Check if parent exists and is a directory
         let parent = inodes.get_mut(&parent_inode).ok_or(FsError::NotFound)?;
         if parent.metadata.file_type != FileType::Directory {
@@ -254,11 +259,6 @@ impl FileSystem for RamFs {
         // Check if file already exists
         if parent.entries.contains_key(&filename) {
             return Err(FsError::AlreadyExists);
-        }
-
-        // Check inode limit
-        if inodes.len() >= MAX_FILES as usize {
-            return Err(FsError::NoSpaceLeft);
         }
 
         // Create new file inode
@@ -512,6 +512,11 @@ impl FileSystem for RamFs {
 
         let mut inodes = self.inodes.write();
         
+        // Check inode limit first
+        if inodes.len() >= MAX_FILES as usize {
+            return Err(FsError::NoSpaceLeft);
+        }
+        
         // Check if parent exists and is a directory
         let parent = inodes.get_mut(&parent_inode).ok_or(FsError::NotFound)?;
         if parent.metadata.file_type != FileType::Directory {
@@ -521,11 +526,6 @@ impl FileSystem for RamFs {
         // Check if link already exists
         if parent.entries.contains_key(&linkname) {
             return Err(FsError::AlreadyExists);
-        }
-
-        // Check inode limit
-        if inodes.len() >= MAX_FILES as usize {
-            return Err(FsError::NoSpaceLeft);
         }
 
         // Create new symlink inode
