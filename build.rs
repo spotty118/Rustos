@@ -20,7 +20,7 @@ fn main() {
     let bios_image = out_dir.join("rustos-bios.img");
     let uefi_image = out_dir.join("rustos-uefi.img");
 
-    let config = BootConfig::new_default();
+    let config = BootConfig::default();
 
     let mut bios_builder = BiosBoot::new(&kernel_path);
     bios_builder.set_boot_config(&config);
