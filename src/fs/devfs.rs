@@ -3,6 +3,7 @@
 //! This module provides a device filesystem that exposes system devices
 //! as files in the /dev directory. It includes standard devices like
 //! null, zero, random, and console.
+use crate::{println, print};
 
 use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,

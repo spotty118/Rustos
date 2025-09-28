@@ -3,6 +3,7 @@
 //! This module provides UDP packet processing and socket operations
 //! for connectionless datagram communication.
 
+use crate::println;
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
 use alloc::{vec::Vec, collections::BTreeMap};
 use spin::RwLock;

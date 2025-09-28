@@ -8,6 +8,7 @@ use alloc::{vec::Vec, string::String, collections::BTreeMap, boxed::Box, format}
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
+use crate::println;
 
 /// Hot-plug event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

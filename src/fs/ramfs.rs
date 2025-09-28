@@ -140,8 +140,8 @@ impl RamFs {
     }
 
     /// Split path into components
-    fn split_path(&self, path: &str) -> Vec<&str> {
-        path.split('/').filter(|c| !c.is_empty()).collect()
+    fn split_path(&self, path: &str) -> Vec<String> {
+        path.split('/').filter(|c| !c.is_empty()).map(|s| s.to_string()).collect()
     }
 
     /// Resolve path to inode number
@@ -161,7 +161,7 @@ impl RamFs {
                 return Err(FsError::NotADirectory);
             }
 
-            current_inode = *inode.entries.get(component).ok_or(FsError::NotFound)?;
+            current_inode = *inode.entries.get(&component).ok_or(FsError::NotFound)?;
         }
 
         Ok(current_inode)
@@ -178,7 +178,7 @@ impl RamFs {
             return Err(FsError::InvalidArgument);
         }
 
-        let filename = components.last().unwrap().to_string();
+        let filename = components.last().unwrap().clone();
         
         if components.len() == 1 {
             // File in root directory

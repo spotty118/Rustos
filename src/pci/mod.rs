@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::instructions::port::{PortReadOnly, PortWriteOnly};
+use crate::println;
 
 /// Bootloader-provided ACPI Root System Description Pointer (physical address)
 static ACPI_RSDP_ADDRESS: AtomicU64 = AtomicU64::new(0);

@@ -43,12 +43,20 @@ pub mod desktop;
 pub mod drivers;
 pub mod graphics;
 pub mod network;
+pub mod vga_buffer;
 
 // Core kernel systems
 pub mod memory;
 pub mod interrupts;
 pub mod gdt;
 pub mod process;
+pub mod time;
+pub mod arch;
+pub mod smp;
+pub mod security;
+pub mod kernel;
+pub mod ipc;
+pub mod demo;
 
 // PCI bus enumeration and management
 pub mod pci;
@@ -223,7 +231,7 @@ pub fn _print(args: core::fmt::Arguments) {
 #[macro_export]
 macro_rules! serial_print {
     ($($arg:tt)*) => {
-        $crate::_print(format_args!($($arg)*));
+        $crate::_print(format_args!($($arg)*))
     };
 }
 
@@ -232,6 +240,11 @@ macro_rules! serial_println {
     () => ($crate::serial_print!("\n"));
     ($fmt:expr) => ($crate::serial_print!(concat!($fmt, "\n")));
     ($fmt:expr, $($arg:tt)*) => ($crate::serial_print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::serial_print!($($arg)*));
 }
 
 #[macro_export]
