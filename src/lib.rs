@@ -43,12 +43,17 @@ pub mod desktop;
 pub mod drivers;
 pub mod graphics;
 pub mod network;
+pub mod vga_buffer;
 
 // Core kernel systems
 pub mod memory;
 pub mod interrupts;
 pub mod gdt;
 pub mod process;
+pub mod time;
+pub mod arch;
+pub mod smp;
+pub mod security;
 
 // PCI bus enumeration and management
 pub mod pci;
