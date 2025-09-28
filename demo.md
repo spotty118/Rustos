@@ -1,6 +1,6 @@
-# RustOS Hardware-Optimized AI Kernel Demo
+# RustOS Enterprise Kernel Demo
 
-This document demonstrates the hardware-focused AI features implemented in RustOS.
+This document demonstrates the enterprise-grade features and AI-powered capabilities implemented in RustOS.
 
 ## Core AI Components Implemented
 
