@@ -144,9 +144,12 @@ fn cpuid(leaf: u32) -> (u32, u32, u32, u32) {
 
     unsafe {
         core::arch::asm!(
+            "push rbx",
             "cpuid",
+            "mov {ebx}, ebx",
+            "pop rbx",
             inout("eax") leaf => eax,
-            out("ebx") ebx,
+            ebx = out(reg) ebx,
             inout("ecx") 0u32 => ecx,
             out("edx") edx,
             options(nostack, preserves_flags)
@@ -166,9 +169,12 @@ fn cpuid_count(leaf: u32, sub_leaf: u32) -> (u32, u32, u32, u32) {
 
     unsafe {
         core::arch::asm!(
+            "push rbx",
             "cpuid",
+            "mov {ebx}, ebx",
+            "pop rbx",
             inout("eax") leaf => eax,
-            out("ebx") ebx,
+            ebx = out(reg) ebx,
             inout("ecx") sub_leaf => ecx,
             out("edx") edx,
             options(nostack, preserves_flags)

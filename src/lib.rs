@@ -54,6 +54,7 @@ pub mod time;
 pub mod arch;
 pub mod smp;
 pub mod security;
+pub mod kernel;
 
 // PCI bus enumeration and management
 pub mod pci;
