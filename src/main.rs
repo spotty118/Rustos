@@ -21,13 +21,16 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use bootloader_api::{entry_point, BootInfo};
 use bootloader_api::info::MemoryRegionKind;
-use rustos::{acpi, desktop, drivers, gdt, interrupts, memory, process};
+use rustos::{
+    acpi, desktop, drivers, gdt, interrupts, memory, performance_monitor, process,
+};
 
 use desktop::{
     get_desktop_status, setup_full_desktop, update_desktop, DesktopStatus,
 };
 use drivers::is_graphics_ready;
 use memory::{get_memory_stats, MemoryStats};
+use performance_monitor::{MetricCategory, PerformanceStats};
 
 // Global allocator is defined in lib.rs
 
@@ -386,6 +389,67 @@ fn init_kernel(boot_info: &BootInfo) {
     // Initialize GPU acceleration
     init_gpu();
     println!("✓ GPU acceleration initialized");
+
+    // Prepare the performance monitor with an initial snapshot of the system.
+    let (total_mem, used_mem, _) = get_memory_stats_simple();
+    let memory_percent = if total_mem > 0 {
+        ((used_mem as u128 * 100) / total_mem as u128) as f32
+    } else {
+        0.0
+    };
+    let (gpu_available, gpu_utilization, _, _) = get_gpu_stats();
+    let gpu_percent = if gpu_available {
+        gpu_utilization as f32
+    } else {
+        0.0
+    };
+    let cpu_percent = unsafe { CPU_UTILIZATION as f32 };
+    let ai_level = unsafe { AI_SYSTEM.optimization_level as f32 };
+
+    let baseline_stats = PerformanceStats {
+        cpu_utilization: cpu_percent,
+        memory_usage_percent: memory_percent,
+        io_throughput_mbps: 90.0,
+        network_utilization: 25.0,
+        gpu_utilization: gpu_percent,
+        thermal_state: 35.0,
+        power_consumption_watts: 110.0,
+        ai_inference_rate: ai_level * 0.8,
+        scheduler_efficiency: 97.0,
+        interrupt_rate: 180.0,
+        cache_hit_rate: 94.0,
+        storage_latency_ms: 4.5,
+    };
+
+    let mut monitor = performance_monitor::monitor().lock();
+    monitor.reset();
+    monitor.set_monitoring_enabled(true);
+    monitor.set_ai_optimization(true);
+    monitor.update_overview(baseline_stats);
+    monitor.record_sample(MetricCategory::CPU, 0, baseline_stats.cpu_utilization);
+    monitor.record_sample(MetricCategory::Memory, 0, baseline_stats.memory_usage_percent);
+    monitor.record_sample(MetricCategory::GPU, 0, baseline_stats.gpu_utilization);
+    monitor.record_sample(MetricCategory::Network, 0, baseline_stats.network_utilization);
+    monitor.record_sample(MetricCategory::IO, 0, baseline_stats.io_throughput_mbps);
+    monitor.record_sample(MetricCategory::Thermal, 0, baseline_stats.thermal_state);
+    monitor.record_sample(
+        MetricCategory::Power,
+        0,
+        baseline_stats.power_consumption_watts,
+    );
+    monitor.record_sample(MetricCategory::AI, 0, baseline_stats.ai_inference_rate);
+    monitor.record_sample(
+        MetricCategory::Scheduler,
+        0,
+        baseline_stats.scheduler_efficiency,
+    );
+    monitor.record_sample(MetricCategory::Interrupt, 0, baseline_stats.interrupt_rate);
+    monitor.record_sample(MetricCategory::Cache, 0, baseline_stats.cache_hit_rate);
+    monitor.record_sample(
+        MetricCategory::Storage,
+        0,
+        baseline_stats.storage_latency_ms,
+    );
 
     // Initialize PCI bus enumeration
     init_pci_system(boot_info);
@@ -905,17 +969,71 @@ static mut SYSTEM_TICKS: u64 = 0;
 static mut CPU_UTILIZATION: u8 = 25;
 
 fn update_performance_metrics() {
-    unsafe {
+    let (ticks, cpu_util, network_usage) = unsafe {
         SYSTEM_TICKS += 1;
-
-        // Simulate varying CPU utilization
         CPU_UTILIZATION = ((SYSTEM_TICKS % 100) as u8 + 20).min(95);
-
-        // Update GPU utilization based on workload
+        let network = ((SYSTEM_TICKS * 7) % 100) as u8;
         if SYSTEM_TICKS % 50 == 0 {
             gpu_compute_task();
         }
-    }
+        (SYSTEM_TICKS, CPU_UTILIZATION, network)
+    };
+
+    let (gpu_available, gpu_utilization, _, _) = get_gpu_stats();
+    let gpu_percent = if gpu_available {
+        gpu_utilization as u8
+    } else {
+        0
+    };
+
+    let (total, used, _) = get_memory_stats_simple();
+    let memory_percent = if total > 0 {
+        ((used as u128 * 100) / total as u128) as u8
+    } else {
+        0
+    };
+
+    let ai_level = unsafe { AI_SYSTEM.optimization_level as f32 };
+    let cpu_value = cpu_util as f32;
+    let gpu_value = gpu_percent as f32;
+    let mem_value = memory_percent as f32;
+    let network_value = network_usage as f32;
+    let io_value = 100.0 + (network_usage as f32 * 0.6);
+    let thermal = 35.0 + (cpu_value * 0.25) + (gpu_value * 0.15);
+    let power = 85.0 + (cpu_value * 1.3) + (gpu_value * 1.1);
+    let scheduler_eff = 97.0 - (cpu_value * 0.05);
+    let interrupt_rate = 160.0 + cpu_value * 1.2;
+    let cache_hit = 96.0 - (cpu_value * 0.03);
+    let storage_latency = 4.0 + (mem_value * 0.04);
+
+    let mut monitor = performance_monitor::monitor().lock();
+    monitor.record_sample(MetricCategory::CPU, ticks, cpu_value);
+    monitor.record_sample(MetricCategory::GPU, ticks, gpu_value);
+    monitor.record_sample(MetricCategory::Memory, ticks, mem_value);
+    monitor.record_sample(MetricCategory::Network, ticks, network_value);
+    monitor.record_sample(MetricCategory::IO, ticks, io_value);
+    monitor.record_sample(MetricCategory::Thermal, ticks, thermal);
+    monitor.record_sample(MetricCategory::Power, ticks, power);
+    monitor.record_sample(MetricCategory::AI, ticks, ai_level);
+    monitor.record_sample(MetricCategory::Scheduler, ticks, scheduler_eff);
+    monitor.record_sample(MetricCategory::Interrupt, ticks, interrupt_rate);
+    monitor.record_sample(MetricCategory::Cache, ticks, cache_hit);
+    monitor.record_sample(MetricCategory::Storage, ticks, storage_latency);
+
+    monitor.update_overview(PerformanceStats {
+        cpu_utilization: cpu_value,
+        memory_usage_percent: mem_value,
+        io_throughput_mbps: io_value,
+        network_utilization: network_value,
+        gpu_utilization: gpu_value,
+        thermal_state: thermal,
+        power_consumption_watts: power,
+        ai_inference_rate: ai_level,
+        scheduler_efficiency: scheduler_eff,
+        interrupt_rate,
+        cache_hit_rate: cache_hit,
+        storage_latency_ms: storage_latency,
+    });
 }
 
 // ========== KERNEL FEATURES DEMONSTRATION ==========
@@ -972,6 +1090,39 @@ fn demonstrate_features() {
     println!("  Neural Networks: {}", networks);
     println!("  AI Operations: {}", ops);
     println!("  Optimization: {}%", opt_level);
+
+    // Performance monitoring demo
+    VGA_WRITER.lock().set_color(Color::LightGreen, Color::Black);
+    println!("Performance Monitoring:");
+    VGA_WRITER.lock().set_color(Color::White, Color::Black);
+    let (perf_stats, strategy, health, bottlenecks) = {
+        let monitor = performance_monitor::monitor().lock();
+        (
+            monitor.current_stats(),
+            monitor.active_strategy(),
+            monitor.overall_health_score(),
+            monitor.bottlenecks(),
+        )
+    };
+    println!("  CPU Utilization: {:.1}%", perf_stats.cpu_utilization);
+    println!("  GPU Utilization: {:.1}%", perf_stats.gpu_utilization);
+    println!("  Memory Usage: {:.1}%", perf_stats.memory_usage_percent);
+    println!("  Thermal State: {:.1} °C", perf_stats.thermal_state);
+    println!("  Power Draw: {:.1} W", perf_stats.power_consumption_watts);
+    println!("  Active Strategy: {}", strategy);
+    println!("  System Health: {:.0}%", health * 100.0);
+    if bottlenecks.is_empty() {
+        println!("  Bottlenecks: none detected");
+    } else {
+        println!("  Bottlenecks:");
+        for bottleneck in bottlenecks.iter().take(3) {
+            println!(
+                "    {} ({}): {}",
+                bottleneck.category, bottleneck.severity, bottleneck.description
+            );
+        }
+    }
+    println!();
 
     // AI Prediction Demo
     let predicted_perf = ai_predict_performance();

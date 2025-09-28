@@ -70,6 +70,9 @@ pub mod fs;
 // Network stack (TCP/IP)
 pub mod net;
 
+// Performance monitoring and analytics
+pub mod performance_monitor;
+
 // AI module - create a basic inference engine for the tests
 pub mod ai {
     pub mod inference_engine {
