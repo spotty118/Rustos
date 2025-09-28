@@ -15,10 +15,11 @@ pub mod udp;
 pub mod socket;
 pub mod device;
 
-use alloc::{vec::Vec, vec, collections::BTreeMap, string::String};
+use alloc::{vec::Vec, vec, collections::BTreeMap, string::String, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
+use crate::println;
 
 /// Network address types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

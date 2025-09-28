@@ -4,7 +4,7 @@
 //! and dynamic device management capabilities.
 
 use super::{DriverInfo, DriverType, DriverStatus, DeviceInfo};
-use alloc::{vec::Vec, string::String, collections::BTreeMap, boxed::Box};
+use alloc::{vec::Vec, string::String, collections::BTreeMap, boxed::Box, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
