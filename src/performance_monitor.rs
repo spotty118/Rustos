@@ -7,9 +7,10 @@
 //! derives optimization suggestions that the UI code can render.
 
 use alloc::vec::Vec as AllocVec;
+use alloc::collections::BTreeMap;
 use core::cmp::Ordering;
 use core::fmt;
-use heapless::{FnvIndexMap, Vec as HeaplessVec};
+use heapless::{Vec as HeaplessVec};
 use lazy_static::lazy_static;
 use spin::Mutex;
 
@@ -33,7 +34,7 @@ pub fn monitor() -> &'static Mutex<PerformanceMonitor> {
 }
 
 /// Categories of metrics tracked by the performance monitor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MetricCategory {
     CPU,
     Memory,
@@ -216,7 +217,7 @@ impl Default for PerformanceStats {
 
 /// Internal state of the performance monitor.
 pub struct PerformanceMonitor {
-    metrics: FnvIndexMap<MetricCategory, MetricHistory, MAX_TRACKED_METRICS>,
+    metrics: BTreeMap<MetricCategory, MetricHistory>,
     current_stats: PerformanceStats,
     active_strategy: OptimizationStrategy,
     bottlenecks: HeaplessVec<PerformanceBottleneck, MAX_BOTTLENECKS>,
@@ -229,7 +230,7 @@ impl PerformanceMonitor {
     /// Create a new monitor with default configuration.
     pub fn new() -> Self {
         Self {
-            metrics: FnvIndexMap::new(),
+            metrics: BTreeMap::new(),
             current_stats: PerformanceStats::default(),
             active_strategy: OptimizationStrategy::Balanced,
             bottlenecks: HeaplessVec::new(),
