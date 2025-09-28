@@ -32,7 +32,7 @@ impl Default for DesktopConfig {
             double_buffered: true,
             hardware_acceleration: false,
             show_splash: true,
-            background_color: Color::rgb(64, 128, 128),
+            background_color: Color::rgb(28, 34, 54),
         }
     }
 }

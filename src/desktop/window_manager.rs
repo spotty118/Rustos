@@ -4,7 +4,7 @@
 //! and event handling for the RustOS kernel.
 
 use crate::graphics::framebuffer::{Color, Rect};
-// use core::cmp::max; // Currently unused
+use core::cmp::{max, min};
 use heapless::Vec;
 
 /// Maximum number of windows that can be managed simultaneously
@@ -16,6 +16,16 @@ pub const TITLE_BAR_HEIGHT: usize = 24;
 /// Default window border width
 pub const BORDER_WIDTH: usize = 2;
 
+/// Global chrome constants to mimic a macOS-inspired layout
+pub const MENU_BAR_HEIGHT: usize = 28;
+pub const DOCK_HEIGHT: usize = 72;
+pub const DOCK_ICON_SIZE: usize = 48;
+pub const DOCK_ICON_GAP: usize = 12;
+pub const DOCK_ICON_COUNT: usize = 6;
+pub const WINDOW_SHADOW_MARGIN: usize = 6;
+pub const TRAFFIC_LIGHT_RADIUS: usize = 6;
+pub const TRAFFIC_LIGHT_SPACING: usize = 14;
+
 /// Minimum window size
 pub const MIN_WINDOW_WIDTH: usize = 200;
 pub const MIN_WINDOW_HEIGHT: usize = 150;
@@ -24,17 +34,33 @@ pub const MIN_WINDOW_HEIGHT: usize = 150;
 pub mod colors {
     use crate::graphics::framebuffer::Color;
 
-    pub const DESKTOP_BACKGROUND: Color = Color::rgb(64, 128, 128);
-    pub const WINDOW_BACKGROUND: Color = Color::rgb(240, 240, 240);
-    pub const TITLE_BAR_ACTIVE: Color = Color::rgb(70, 130, 180);
-    pub const TITLE_BAR_INACTIVE: Color = Color::rgb(128, 128, 128);
-    pub const BORDER_ACTIVE: Color = Color::rgb(70, 130, 180);
-    pub const BORDER_INACTIVE: Color = Color::rgb(128, 128, 128);
+    pub const DESKTOP_BACKGROUND_TOP: Color = Color::rgb(24, 31, 54);
+    pub const DESKTOP_BACKGROUND_BOTTOM: Color = Color::rgb(55, 83, 132);
+    pub const DESKTOP_GLOW: Color = Color::rgb(80, 110, 170);
+    pub const MENU_BAR_BACKGROUND: Color = Color::rgb(42, 44, 56);
+    pub const MENU_BAR_HIGHLIGHT: Color = Color::rgb(82, 84, 96);
+    pub const MENU_BAR_ACCENT: Color = Color::rgb(25, 26, 32);
+    pub const MENU_BAR_ICON: Color = Color::rgb(215, 219, 230);
+    pub const DESKTOP_BACKGROUND: Color = DESKTOP_BACKGROUND_TOP;
+    pub const WINDOW_BACKGROUND: Color = Color::rgb(248, 250, 255);
+    pub const WINDOW_SHADOW: Color = Color::rgb(12, 15, 24);
+    pub const TITLE_BAR_ACTIVE: Color = Color::rgb(116, 151, 235);
+    pub const TITLE_BAR_INACTIVE: Color = Color::rgb(96, 98, 120);
+    pub const BORDER_ACTIVE: Color = Color::rgb(140, 160, 220);
+    pub const BORDER_INACTIVE: Color = Color::rgb(86, 88, 110);
     pub const TEXT_COLOR: Color = Color::rgb(0, 0, 0);
     pub const TEXT_COLOR_WHITE: Color = Color::rgb(255, 255, 255);
-    pub const BUTTON_BACKGROUND: Color = Color::rgb(225, 225, 225);
-    pub const BUTTON_HOVER: Color = Color::rgb(200, 200, 200);
-    pub const BUTTON_PRESSED: Color = Color::rgb(180, 180, 180);
+    pub const BUTTON_BACKGROUND: Color = Color::rgb(235, 236, 240);
+    pub const BUTTON_HOVER: Color = Color::rgb(210, 212, 218);
+    pub const BUTTON_PRESSED: Color = Color::rgb(188, 190, 198);
+    pub const DOCK_BACKGROUND: Color = Color::rgb(38, 40, 52);
+    pub const DOCK_GLASS: Color = Color::rgb(60, 64, 80);
+    pub const DOCK_HIGHLIGHT: Color = Color::rgb(92, 96, 118);
+    pub const DOCK_ICON_ACCENT: Color = Color::rgb(124, 180, 242);
+    pub const DOCK_INDICATOR: Color = Color::rgb(220, 230, 255);
+    pub const TRAFFIC_LIGHT_RED: Color = Color::rgb(255, 96, 92);
+    pub const TRAFFIC_LIGHT_YELLOW: Color = Color::rgb(255, 189, 68);
+    pub const TRAFFIC_LIGHT_GREEN: Color = Color::rgb(0, 202, 78);
 }
 
 /// Window state enumeration
@@ -234,11 +260,32 @@ pub struct WindowManager {
     cursor: Cursor,
     dragging_window: Option<WindowId>,
     drag_offset: (usize, usize),
+    menu_bar_rect: Rect,
+    dock_rect: Rect,
 }
 
 impl WindowManager {
     /// Create a new window manager
     pub fn new(screen_width: usize, screen_height: usize) -> Self {
+        let menu_bar_rect = Rect::new(0, 0, screen_width, MENU_BAR_HEIGHT);
+        let mut dock_width = min(screen_width.saturating_sub(120), 720);
+        if dock_width == 0 {
+            dock_width = screen_width.saturating_sub(40);
+        }
+        if dock_width == 0 {
+            dock_width = screen_width;
+        }
+        dock_width = max(dock_width, screen_width.saturating_sub(80));
+        dock_width = max(dock_width, min(240, screen_width));
+        dock_width = min(dock_width, screen_width);
+        let dock_x = (screen_width.saturating_sub(dock_width)) / 2;
+        let dock_y = if screen_height > DOCK_HEIGHT + 48 {
+            screen_height - DOCK_HEIGHT - 32
+        } else {
+            screen_height.saturating_sub(DOCK_HEIGHT)
+        };
+        let dock_rect = Rect::new(dock_x, dock_y, dock_width, DOCK_HEIGHT);
+
         Self {
             windows: Vec::new(),
             buttons: Vec::new(),
@@ -251,6 +298,8 @@ impl WindowManager {
             cursor: Cursor::new(),
             dragging_window: None,
             drag_offset: (0, 0),
+            menu_bar_rect,
+            dock_rect,
         }
     }
 
@@ -432,7 +481,9 @@ impl WindowManager {
         }
 
         // Clear desktop background
-        crate::graphics::framebuffer::fill_rect(self.desktop_rect, colors::DESKTOP_BACKGROUND);
+        self.render_background();
+        self.render_menu_bar();
+        self.render_dock();
 
         // Render windows (back to front)
         let mut sorted_windows: Vec<&Window, MAX_WINDOWS> = Vec::new();
@@ -472,6 +523,8 @@ impl WindowManager {
 
     /// Render a single window
     fn render_window(&self, window: &Window) {
+        self.render_window_shadow(window);
+
         // Render border
         if window.has_border {
             crate::graphics::framebuffer::draw_rect(window.rect, window.border_color, BORDER_WIDTH);
@@ -485,16 +538,13 @@ impl WindowManager {
                 window.rect.width.saturating_sub(2 * BORDER_WIDTH),
                 TITLE_BAR_HEIGHT,
             );
-            crate::graphics::framebuffer::fill_rect(title_rect, window.title_bar_color);
-
-            // Render close button
-            let close_button_size = 16;
-            let close_x = window.rect.x + window.rect.width - close_button_size - 4;
-            let close_y = window.rect.y + 4;
-            let close_rect = Rect::new(close_x, close_y, close_button_size, close_button_size);
-
-            crate::graphics::framebuffer::fill_rect(close_rect, colors::BUTTON_BACKGROUND);
-            crate::graphics::framebuffer::draw_rect(close_rect, colors::BORDER_INACTIVE, 1);
+            let title_end_color = if window.focused {
+                Self::shade_color(window.title_bar_color, -40)
+            } else {
+                Self::shade_color(window.title_bar_color, -20)
+            };
+            self.fill_horizontal_gradient(title_rect, window.title_bar_color, title_end_color);
+            self.render_window_controls(window);
         }
 
         // Render window content area
@@ -568,6 +618,244 @@ impl WindowManager {
     /// Force redraw
     pub fn force_redraw(&mut self) {
         self.needs_redraw = true;
+    }
+
+    fn render_background(&self) {
+        let height = max(self.desktop_rect.height, 1);
+        for row in 0..height {
+            let color = Self::lerp_color(
+                colors::DESKTOP_BACKGROUND_TOP,
+                colors::DESKTOP_BACKGROUND_BOTTOM,
+                row,
+                height - 1,
+            );
+            let stripe = Rect::new(self.desktop_rect.x, self.desktop_rect.y + row, self.desktop_rect.width, 1);
+            crate::graphics::framebuffer::fill_rect(stripe, color);
+        }
+
+        let glow_rect = Rect::new(
+            self.desktop_rect.x + self.desktop_rect.width / 4,
+            self.desktop_rect.y + self.desktop_rect.height / 3,
+            self.desktop_rect.width / 2,
+            self.desktop_rect.height / 3,
+        );
+        self.render_glow(glow_rect);
+    }
+
+    fn render_menu_bar(&self) {
+        crate::graphics::framebuffer::fill_rect(self.menu_bar_rect, colors::MENU_BAR_BACKGROUND);
+
+        let highlight = Rect::new(
+            self.menu_bar_rect.x,
+            self.menu_bar_rect.y,
+            self.menu_bar_rect.width,
+            2,
+        );
+        crate::graphics::framebuffer::fill_rect(highlight, colors::MENU_BAR_HIGHLIGHT);
+
+        let shadow = Rect::new(
+            self.menu_bar_rect.x,
+            self.menu_bar_rect.y + self.menu_bar_rect.height.saturating_sub(2),
+            self.menu_bar_rect.width,
+            2,
+        );
+        crate::graphics::framebuffer::fill_rect(shadow, colors::MENU_BAR_ACCENT);
+
+        let logo_rect = Rect::new(
+            self.menu_bar_rect.x + 16,
+            self.menu_bar_rect.y + 6,
+            14,
+            16,
+        );
+        crate::graphics::framebuffer::fill_rect(logo_rect, colors::MENU_BAR_ICON);
+
+        let status_indicator = Rect::new(
+            self.menu_bar_rect.x + self.menu_bar_rect.width.saturating_sub(80),
+            self.menu_bar_rect.y + 8,
+            56,
+            12,
+        );
+        crate::graphics::framebuffer::draw_rect(status_indicator, colors::MENU_BAR_ICON, 1);
+    }
+
+    fn render_dock(&self) {
+        let shadow_rect = Rect::new(
+            self.dock_rect.x,
+            self.dock_rect.y,
+            self.dock_rect.width,
+            self.dock_rect.height,
+        );
+        crate::graphics::framebuffer::fill_rect(shadow_rect, colors::WINDOW_SHADOW);
+
+        let glass_rect = Rect::new(
+            self.dock_rect.x + 4,
+            self.dock_rect.y + 4,
+            self.dock_rect.width.saturating_sub(8),
+            self.dock_rect.height.saturating_sub(8),
+        );
+        crate::graphics::framebuffer::fill_rect(glass_rect, colors::DOCK_GLASS);
+
+        let highlight_rect = Rect::new(glass_rect.x, glass_rect.y, glass_rect.width, 6);
+        crate::graphics::framebuffer::fill_rect(highlight_rect, colors::DOCK_HIGHLIGHT);
+
+        let base_rect = Rect::new(
+            glass_rect.x,
+            glass_rect.y + glass_rect.height / 2,
+            glass_rect.width,
+            glass_rect.height / 2,
+        );
+        crate::graphics::framebuffer::fill_rect(base_rect, colors::DOCK_BACKGROUND);
+
+        self.render_dock_icons(glass_rect);
+    }
+
+    fn render_dock_icons(&self, glass_rect: Rect) {
+        let icon_area = Rect::new(
+            glass_rect.x + 24,
+            glass_rect.y + 12,
+            glass_rect.width.saturating_sub(48),
+            glass_rect.height.saturating_sub(24),
+        );
+
+        if icon_area.width == 0 || icon_area.height == 0 {
+            return;
+        }
+
+        let total_icon_width = DOCK_ICON_COUNT * DOCK_ICON_SIZE + (DOCK_ICON_COUNT - 1) * DOCK_ICON_GAP;
+        let start_x = if icon_area.width > total_icon_width {
+            icon_area.x + (icon_area.width - total_icon_width) / 2
+        } else {
+            icon_area.x
+        };
+        let icon_y = icon_area.y + (icon_area.height.saturating_sub(DOCK_ICON_SIZE)) / 2;
+
+        for i in 0..DOCK_ICON_COUNT {
+            let icon_x = start_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP);
+            let icon_rect = Rect::new(icon_x, icon_y, DOCK_ICON_SIZE, DOCK_ICON_SIZE);
+            crate::graphics::framebuffer::fill_rect(icon_rect, colors::DOCK_ICON_ACCENT);
+            crate::graphics::framebuffer::draw_rect(icon_rect, colors::BORDER_ACTIVE, 1);
+
+            let indicator_rect = Rect::new(
+                icon_x + DOCK_ICON_SIZE / 2 - 6,
+                glass_rect.y + glass_rect.height.saturating_sub(10),
+                12,
+                4,
+            );
+            crate::graphics::framebuffer::fill_rect(indicator_rect, colors::DOCK_INDICATOR);
+        }
+    }
+
+    fn render_window_controls(&self, window: &Window) {
+        let controls_center_y = window.rect.y + BORDER_WIDTH + TITLE_BAR_HEIGHT / 2;
+        let mut control_x = window.rect.x + BORDER_WIDTH + 20;
+        let colors = [
+            colors::TRAFFIC_LIGHT_RED,
+            colors::TRAFFIC_LIGHT_YELLOW,
+            colors::TRAFFIC_LIGHT_GREEN,
+        ];
+
+        for color in colors.iter() {
+            self.draw_circle(control_x, controls_center_y, TRAFFIC_LIGHT_RADIUS, *color);
+            control_x += TRAFFIC_LIGHT_SPACING;
+        }
+    }
+
+    fn render_window_shadow(&self, window: &Window) {
+        if WINDOW_SHADOW_MARGIN == 0 {
+            return;
+        }
+
+        let shadow_rect = Rect::new(
+            window.rect.x.saturating_sub(WINDOW_SHADOW_MARGIN),
+            window.rect.y.saturating_sub(WINDOW_SHADOW_MARGIN),
+            window.rect.width + WINDOW_SHADOW_MARGIN * 2,
+            window.rect.height + WINDOW_SHADOW_MARGIN * 2,
+        );
+
+        crate::graphics::framebuffer::fill_rect(shadow_rect, colors::WINDOW_SHADOW);
+    }
+
+    fn render_glow(&self, rect: Rect) {
+        let steps = min(rect.height / 2, 12).max(1);
+        for i in 0..steps {
+            let inset = i * 4;
+            if rect.width <= inset * 2 || rect.height <= inset * 2 {
+                break;
+            }
+            let glow_rect = Rect::new(
+                rect.x + inset,
+                rect.y + inset,
+                rect.width.saturating_sub(inset * 2),
+                rect.height.saturating_sub(inset * 2),
+            );
+            let delta = ((steps - i) * 4).min(48) as i16;
+            let shade = Self::shade_color(colors::DESKTOP_GLOW, delta);
+            crate::graphics::framebuffer::fill_rect(glow_rect, shade);
+        }
+    }
+
+    fn draw_circle(&self, center_x: usize, center_y: usize, radius: usize, color: Color) {
+        let radius = radius as isize;
+        let radius_sq = radius * radius;
+        let center_x = center_x as isize;
+        let center_y = center_y as isize;
+        let width = self.desktop_rect.width as isize;
+        let height = self.desktop_rect.height as isize;
+
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius_sq {
+                    let x = center_x + dx;
+                    let y = center_y + dy;
+                    if x >= 0 && y >= 0 && x < width && y < height {
+                        crate::graphics::framebuffer::set_pixel(x as usize, y as usize, color);
+                    }
+                }
+            }
+        }
+    }
+
+    fn fill_horizontal_gradient(&self, rect: Rect, start: Color, end: Color) {
+        if rect.width == 0 {
+            return;
+        }
+
+        for column in 0..rect.width {
+            let color = Self::lerp_color(start, end, column, rect.width - 1);
+            let line = Rect::new(rect.x + column, rect.y, 1, rect.height);
+            crate::graphics::framebuffer::fill_rect(line, color);
+        }
+    }
+
+    fn lerp_color(start: Color, end: Color, numerator: usize, denominator: usize) -> Color {
+        if denominator == 0 {
+            return start;
+        }
+
+        let r = Self::lerp_channel(start.r, end.r, numerator, denominator);
+        let g = Self::lerp_channel(start.g, end.g, numerator, denominator);
+        let b = Self::lerp_channel(start.b, end.b, numerator, denominator);
+        Color::rgb(r, g, b)
+    }
+
+    fn lerp_channel(start: u8, end: u8, numerator: usize, denominator: usize) -> u8 {
+        if denominator == 0 {
+            return start;
+        }
+        let start = start as i32;
+        let end = end as i32;
+        let diff = end - start;
+        let value = start + diff * numerator as i32 / denominator as i32;
+        value.clamp(0, 255) as u8
+    }
+
+    fn shade_color(color: Color, delta: i16) -> Color {
+        let adjust = |channel: u8| -> u8 {
+            let value = channel as i32 + delta as i32;
+            value.clamp(0, 255) as u8
+        };
+
+        Color::rgb(adjust(color.r), adjust(color.g), adjust(color.b))
     }
 }
 
