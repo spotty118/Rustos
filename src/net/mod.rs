@@ -15,7 +15,7 @@ pub mod udp;
 pub mod socket;
 pub mod device;
 
-use alloc::{vec::Vec, vec, collections::BTreeMap, string::String, format};
+use alloc::{vec::Vec, vec, collections::BTreeMap, string::{String, ToString}, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
@@ -73,8 +73,9 @@ impl fmt::Display for NetworkAddress {
                     bytes[8], bytes[9], bytes[10], bytes[11],
                     bytes[12], bytes[13], bytes[14], bytes[15])
             }
-            NetworkAddress::Mac([a, b, c, d, e, f]) => {
-                write!(f, "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", a, b, c, d, e, f)
+            NetworkAddress::Mac(bytes) => {
+                write!(f, "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", 
+                       bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
             }
         }
     }
@@ -581,7 +582,7 @@ pub fn init() -> NetworkResult<()> {
         name: "lo".to_string(),
         mac_address: NetworkAddress::mac([0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
         ip_addresses: vec![NetworkAddress::ipv4(127, 0, 0, 1)],
-        mtu: 65536,
+        mtu: 65535,
         flags: InterfaceFlags {
             up: true,
             broadcast: false,

@@ -161,12 +161,23 @@ pub struct SyscallContext {
 }
 
 /// System call statistics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SyscallStats {
     pub total_calls: u64,
     pub successful_calls: u64,
     pub failed_calls: u64,
     pub calls_by_type: [u64; 64], // Track first 64 syscall types
+}
+
+impl Default for SyscallStats {
+    fn default() -> Self {
+        Self {
+            total_calls: 0,
+            successful_calls: 0,
+            failed_calls: 0,
+            calls_by_type: [0; 64],
+        }
+    }
 }
 
 static mut SYSCALL_STATS: SyscallStats = SyscallStats {

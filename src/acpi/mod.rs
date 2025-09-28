@@ -399,7 +399,7 @@ unsafe fn read_sdt_entries(virt_addr: usize, entry_size: usize) -> Result<Vec<u6
         return Err("ACPI SDT checksum validation failed");
     }
 
-    Ok(McfgInfo { entries })
+    Ok(entries)
 }
 
 const MADT_ENTRY_PROCESSOR: u8 = 0;
@@ -457,7 +457,11 @@ pub fn parse_madt() -> Result<MadtInfo, &'static str> {
         })
         .ok_or("Failed to map MADT virtual address")?;
 
-    let info = unsafe { parse_madt_from_address(virt, descriptor.length as usize) }?;
+    // Get the length from the MADT header
+    let header = unsafe { &*(virt as *const SdtHeader) };
+    let table_length = header.length as usize;
+
+    let info = unsafe { parse_madt_from_address(virt, table_length) }?;
 
     {
         let mut state = ACPI_STATE.write();
@@ -579,7 +583,11 @@ pub fn parse_mcfg() -> Result<McfgInfo, &'static str> {
         })
         .ok_or("Failed to map MCFG virtual address")?;
 
-    let info = unsafe { parse_mcfg_from_address(virt, descriptor.length as usize) }?;
+    // Get the length from the MCFG header
+    let header = unsafe { &*(virt as *const SdtHeader) };
+    let table_length = header.length as usize;
+
+    let info = unsafe { parse_mcfg_from_address(virt, table_length) }?;
 
     {
         let mut state = ACPI_STATE.write();

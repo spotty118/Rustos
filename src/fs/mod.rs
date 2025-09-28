@@ -11,7 +11,7 @@ pub mod vfs;
 pub mod ramfs;
 pub mod devfs;
 
-use alloc::{string::String, vec::Vec, collections::BTreeMap, format, boxed::Box};
+use alloc::{string::{String, ToString}, vec::Vec, collections::BTreeMap, format, boxed::Box};
 use crate::println;
 use core::fmt;
 use spin::{RwLock, Mutex};
