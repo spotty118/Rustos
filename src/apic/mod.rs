@@ -5,8 +5,8 @@
 
 use crate::println;
 use core::ptr;
-use x86_64::{PhysAddr, VirtAddr};
-use crate::acpi::{MadtInfo, IoApic as AcpiIoApic, InterruptOverride};
+use x86_64::VirtAddr;
+use crate::acpi::{MadtInfo, InterruptOverride};
 
 /// Local APIC register offsets
 #[repr(u32)]

@@ -15,7 +15,7 @@ pub mod udp;
 pub mod socket;
 pub mod device;
 
-use alloc::{vec::Vec, vec, collections::BTreeMap, string::{String, ToString}, format};
+use alloc::{vec::Vec, vec, collections::BTreeMap, string::{String, ToString}};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;

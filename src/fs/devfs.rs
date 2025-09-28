@@ -7,7 +7,7 @@ use crate::{println, print};
 
 use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,
-    DirectoryEntry, OpenFlags, FsResult, FsError, InodeNumber, get_current_time,
+    DirectoryEntry, OpenFlags, FsResult, FsError, InodeNumber,
 };
 use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap};
 use spin::RwLock;
