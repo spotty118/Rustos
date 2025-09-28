@@ -225,8 +225,12 @@ pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
 
     // Verify checksum
     let calculated_checksum = header.calculate_checksum();
-    if calculated_checksum != 0 {
-        println!("IPv4 checksum mismatch: expected 0, got 0x{:04x}", calculated_checksum);
+    if calculated_checksum != header.checksum {
+        println!(
+            "IPv4 checksum mismatch: calculated 0x{:04x}, header 0x{:04x}",
+            calculated_checksum,
+            header.checksum
+        );
         return Err(NetworkError::InvalidPacket);
     }
 
@@ -469,5 +473,35 @@ impl From<u8> for Protocol {
             58 => Protocol::ICMPv6,
             _ => Protocol::TCP, // Default fallback
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_ipv4_packet_accepts_valid_checksum() {
+        let network_stack = NetworkStack::new();
+
+        let mut packet_bytes = vec![
+            0x45, 0x00, 0x00, 0x1c, // version/IHL, TOS, total length (28)
+            0x00, 0x00, // identification
+            0x00, 0x00, // flags/fragment offset
+            0x40, 0x01, // TTL, protocol (ICMP)
+            0x00, 0x00, // checksum placeholder
+            0xC0, 0x00, 0x02, 0x01, // source IP 192.0.2.1
+            0xFF, 0xFF, 0xFF, 0xFF, // destination IP broadcast
+        ];
+
+        let known_checksum = 0xB8E0;
+        packet_bytes[10] = (known_checksum >> 8) as u8;
+        packet_bytes[11] = (known_checksum & 0xFF) as u8;
+
+        // Minimal 8-byte ICMP payload to exercise the success path
+        packet_bytes.extend_from_slice(&[0u8; 8]);
+
+        let packet = PacketBuffer::from_data(packet_bytes);
+        assert!(process_ipv4_packet(&network_stack, packet).is_ok());
     }
 }
