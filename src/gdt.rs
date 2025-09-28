@@ -26,7 +26,7 @@ lazy_static! {
 
         // Set up the double fault stack in the IST
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
-            let stack_start = VirtAddr::from_ptr(unsafe { &DOUBLE_FAULT_STACK });
+            let stack_start = VirtAddr::from_ptr(unsafe { &raw const DOUBLE_FAULT_STACK });
             let stack_end = stack_start + STACK_SIZE;
             stack_end
         };

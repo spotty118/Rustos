@@ -5,9 +5,9 @@
 
 use crate::{
     arch, time, smp, security, vga_buffer,
-    memory, interrupts, gdt, process,
     serial_println, println
 };
+use spin::Mutex;
 
 /// Kernel initialization result
 pub type KernelResult<T> = Result<T, &'static str>;
@@ -51,7 +51,7 @@ impl Default for KernelCore {
     }
 }
 
-static mut KERNEL_CORE: KernelCore = KernelCore {
+static KERNEL_CORE: Mutex<KernelCore> = Mutex::new(KernelCore {
     arch_initialized: SubsystemState::NotInitialized,
     time_initialized: SubsystemState::NotInitialized,
     smp_initialized: SubsystemState::NotInitialized,
@@ -61,83 +61,123 @@ static mut KERNEL_CORE: KernelCore = KernelCore {
     interrupts_initialized: SubsystemState::NotInitialized,
     gdt_initialized: SubsystemState::NotInitialized,
     processes_initialized: SubsystemState::NotInitialized,
-};
+});
 
 /// Initialize core kernel subsystems
 pub fn init_core_kernel() -> KernelResult<()> {
     serial_println!("Initializing RustOS core kernel subsystems...");
     
-    unsafe {
-        // Initialize VGA buffer first for console output
-        KERNEL_CORE.vga_initialized = SubsystemState::Initializing;
-        vga_buffer::init();
-        KERNEL_CORE.vga_initialized = SubsystemState::Initialized;
-        println!("✓ VGA buffer initialized");
+    // Initialize VGA buffer first for console output
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.vga_initialized = SubsystemState::Initializing;
+    }
+    vga_buffer::init();
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.vga_initialized = SubsystemState::Initialized;
+    }
+    println!("✓ VGA buffer initialized");
 
-        // Initialize architecture-specific features
-        KERNEL_CORE.arch_initialized = SubsystemState::Initializing;
-        match arch::init() {
-            Ok(()) => {
-                KERNEL_CORE.arch_initialized = SubsystemState::Initialized;
-                println!("✓ Architecture features initialized");
-                
-                // Display CPU information
-                let cpu_info = arch::get_cpu_info();
-                println!("  CPU: {} - {}", cpu_info.vendor_id, cpu_info.brand_string);
-                let features = arch::get_cpu_features();
-                println!("  Features: SSE: {}, AVX: {}, FMA: {}", 
-                         features.has_sse, features.has_avx, features.has_fma);
+    // Initialize architecture-specific features
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.arch_initialized = SubsystemState::Initializing;
+    }
+    match arch::init() {
+        Ok(()) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.arch_initialized = SubsystemState::Initialized;
             }
-            Err(e) => {
-                KERNEL_CORE.arch_initialized = SubsystemState::Failed;
-                println!("✗ Architecture initialization failed: {}", e);
-                return Err("Architecture initialization failed");
-            }
+            println!("✓ Architecture features initialized");
+            
+            // Display CPU information
+            let cpu_info = arch::get_cpu_info();
+            println!("  CPU: {} - {}", cpu_info.vendor_id, cpu_info.brand_string);
+            let features = arch::get_cpu_features();
+            println!("  Features: SSE: {}, AVX: {}, FMA: {}", 
+                     features.has_sse, features.has_avx, features.has_fma);
         }
-
-        // Initialize timer system
-        KERNEL_CORE.time_initialized = SubsystemState::Initializing;
-        match time::init() {
-            Ok(()) => {
-                KERNEL_CORE.time_initialized = SubsystemState::Initialized;
-                println!("✓ Timer system initialized");
+        Err(e) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.arch_initialized = SubsystemState::Failed;
             }
-            Err(e) => {
-                KERNEL_CORE.time_initialized = SubsystemState::Failed;
-                println!("✗ Timer initialization failed: {}", e);
-                return Err("Timer initialization failed");
-            }
+            println!("✗ Architecture initialization failed: {}", e);
+            return Err("Architecture initialization failed");
         }
+    }
 
-        // Initialize SMP support
-        KERNEL_CORE.smp_initialized = SubsystemState::Initializing;
-        match smp::init() {
-            Ok(()) => {
-                KERNEL_CORE.smp_initialized = SubsystemState::Initialized;
-                let stats = smp::get_smp_statistics();
-                println!("✓ SMP initialized - {} CPU(s), {} online", 
-                         stats.total_cpus, stats.online_cpus);
+    // Initialize timer system
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.time_initialized = SubsystemState::Initializing;
+    }
+    match time::init() {
+        Ok(()) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.time_initialized = SubsystemState::Initialized;
             }
-            Err(e) => {
-                KERNEL_CORE.smp_initialized = SubsystemState::Failed;
-                println!("✗ SMP initialization failed: {}", e);
-                // SMP failure is not critical for basic functionality
-            }
+            println!("✓ Timer system initialized");
         }
+        Err(e) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.time_initialized = SubsystemState::Failed;
+            }
+            println!("✗ Timer initialization failed: {}", e);
+            return Err("Timer initialization failed");
+        }
+    }
 
-        // Initialize security framework
-        KERNEL_CORE.security_initialized = SubsystemState::Initializing;
-        match security::init() {
-            Ok(()) => {
-                KERNEL_CORE.security_initialized = SubsystemState::Initialized;
-                let level = security::get_security_level();
-                println!("✓ Security framework initialized - Level: {:?}", level);
+    // Initialize SMP support
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.smp_initialized = SubsystemState::Initializing;
+    }
+    match smp::init() {
+        Ok(()) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.smp_initialized = SubsystemState::Initialized;
             }
-            Err(e) => {
-                KERNEL_CORE.security_initialized = SubsystemState::Failed;
-                println!("✗ Security initialization failed: {}", e);
-                return Err("Security initialization failed");
+            let stats = smp::get_smp_statistics();
+            println!("✓ SMP initialized - {} CPU(s), {} online", 
+                     stats.total_cpus, stats.online_cpus);
+        }
+        Err(e) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.smp_initialized = SubsystemState::Failed;
             }
+            println!("✗ SMP initialization failed: {}", e);
+            // SMP failure is not critical for basic functionality
+        }
+    }
+
+    // Initialize security framework
+    {
+        let mut core = KERNEL_CORE.lock();
+        core.security_initialized = SubsystemState::Initializing;
+    }
+    match security::init() {
+        Ok(()) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.security_initialized = SubsystemState::Initialized;
+            }
+            let level = security::get_security_level();
+            println!("✓ Security framework initialized - Level: {:?}", level);
+        }
+        Err(e) => {
+            {
+                let mut core = KERNEL_CORE.lock();
+                core.security_initialized = SubsystemState::Failed;
+            }
+            println!("✗ Security initialization failed: {}", e);
+            return Err("Security initialization failed");
         }
     }
 
@@ -149,17 +189,17 @@ pub fn init_core_kernel() -> KernelResult<()> {
 pub fn display_kernel_status() {
     println!("=== RustOS Kernel Status ===");
     
-    unsafe {
-        println!("Architecture:  {:?}", KERNEL_CORE.arch_initialized);
-        println!("Timer:         {:?}", KERNEL_CORE.time_initialized);
-        println!("SMP:           {:?}", KERNEL_CORE.smp_initialized);
-        println!("Security:      {:?}", KERNEL_CORE.security_initialized);
-        println!("VGA Buffer:    {:?}", KERNEL_CORE.vga_initialized);
-        println!("Memory:        {:?}", KERNEL_CORE.memory_initialized);
-        println!("Interrupts:    {:?}", KERNEL_CORE.interrupts_initialized);
-        println!("GDT:           {:?}", KERNEL_CORE.gdt_initialized);
-        println!("Processes:     {:?}", KERNEL_CORE.processes_initialized);
-    }
+    let core = KERNEL_CORE.lock();
+    println!("Architecture:  {:?}", core.arch_initialized);
+    println!("Timer:         {:?}", core.time_initialized);
+    println!("SMP:           {:?}", core.smp_initialized);
+    println!("Security:      {:?}", core.security_initialized);
+    println!("VGA Buffer:    {:?}", core.vga_initialized);
+    println!("Memory:        {:?}", core.memory_initialized);
+    println!("Interrupts:    {:?}", core.interrupts_initialized);
+    println!("GDT:           {:?}", core.gdt_initialized);
+    println!("Processes:     {:?}", core.processes_initialized);
+    drop(core); // Explicitly drop the lock
     
     // Display system information
     let uptime = time::uptime_ms();
@@ -206,9 +246,9 @@ pub fn test_core_functionality() -> KernelResult<()> {
     
     // Test VGA buffer
     println!("Testing VGA buffer...");
-    let char_count_before = vga_buffer::get_char_count();
+    let _char_count_before = vga_buffer::get_char_count();
     vga_buffer::print_colored("Test message", vga_buffer::Color::LightGreen, vga_buffer::Color::Black);
-    let char_count_after = vga_buffer::get_char_count();
+    let _char_count_after = vga_buffer::get_char_count();
     // Note: char count might not change if not implemented, that's okay
     
     println!("✓ All core functionality tests completed");
@@ -217,17 +257,16 @@ pub fn test_core_functionality() -> KernelResult<()> {
 
 /// Get kernel core state
 pub fn get_kernel_state() -> KernelCore {
-    unsafe { KERNEL_CORE }
+    *KERNEL_CORE.lock()
 }
 
 /// Check if all critical subsystems are initialized
 pub fn is_kernel_ready() -> bool {
-    unsafe {
-        matches!(KERNEL_CORE.arch_initialized, SubsystemState::Initialized) &&
-        matches!(KERNEL_CORE.time_initialized, SubsystemState::Initialized) &&
-        matches!(KERNEL_CORE.security_initialized, SubsystemState::Initialized) &&
-        matches!(KERNEL_CORE.vga_initialized, SubsystemState::Initialized)
-    }
+    let core = KERNEL_CORE.lock();
+    matches!(core.arch_initialized, SubsystemState::Initialized) &&
+    matches!(core.time_initialized, SubsystemState::Initialized) &&
+    matches!(core.security_initialized, SubsystemState::Initialized) &&
+    matches!(core.vga_initialized, SubsystemState::Initialized)
 }
 
 /// Demonstrate enhanced kernel capabilities
@@ -277,8 +316,9 @@ pub fn demonstrate_kernel_capabilities() {
 /// Kernel panic handler integration
 pub fn kernel_panic(info: &core::panic::PanicInfo) -> ! {
     // Use VGA buffer for panic output if available
-    unsafe {
-        if matches!(KERNEL_CORE.vga_initialized, SubsystemState::Initialized) {
+    {
+        let core = KERNEL_CORE.lock();
+        if matches!(core.vga_initialized, SubsystemState::Initialized) {
             vga_buffer::print_colored("KERNEL PANIC!", vga_buffer::Color::White, vga_buffer::Color::Red);
             println!("{}", info);
         }

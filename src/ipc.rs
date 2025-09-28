@@ -4,7 +4,7 @@
 //! shared memory, and semaphores for process communication.
 
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use alloc::{vec::Vec, string::String, collections::BTreeMap, boxed::Box, format, vec};
+use alloc::{vec::Vec, collections::BTreeMap, boxed::Box, format, vec};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
 use crate::{println, security};

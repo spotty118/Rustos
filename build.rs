@@ -1,5 +1,3 @@
-use std::env;
-
 fn main() {
     // Simplified build script - just set up rerun triggers
     println!("cargo:rerun-if-changed=build.rs");

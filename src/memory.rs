@@ -389,7 +389,7 @@ impl PageTableManager {
         flags: PageTableFlags,
     ) -> Result<(), &'static str> {
         unsafe {
-            self.mapper.update_flags(page, flags)
+            let _ = self.mapper.update_flags(page, flags)
                 .map_err(|_| "Failed to update page flags")?;
         }
         Ok(())
