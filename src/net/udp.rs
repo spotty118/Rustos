@@ -315,8 +315,10 @@ pub fn process_packet(
 
     // Verify checksum (if not zero)
     if header.checksum != 0 {
-        let calculated_checksum = header.calculate_checksum(&src_ip, &dst_ip, payload);
-        if calculated_checksum != 0 {
+        let mut checksum_header = header.clone();
+        checksum_header.checksum = 0;
+        let calculated_checksum = checksum_header.calculate_checksum(&src_ip, &dst_ip, payload);
+        if calculated_checksum != header.checksum {
             println!("UDP checksum mismatch");
             return Err(NetworkError::InvalidPacket);
         }
@@ -500,4 +502,59 @@ pub fn udp_leave_multicast(
 fn get_current_time() -> u64 {
     // TODO: Get actual system time
     1000000 // Placeholder timestamp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn process_packet_accepts_valid_checksum() {
+        {
+            let mut sockets = UDP_MANAGER.sockets.write();
+            sockets.clear();
+        }
+        {
+            let mut next_port = UDP_MANAGER.next_port.write();
+            *next_port = 32768;
+        }
+
+        let stack = NetworkStack::new();
+        let src_ip = NetworkAddress::IPv4([192, 168, 1, 1]);
+        let dst_ip = NetworkAddress::IPv4([192, 168, 1, 2]);
+        let dest_port = 8080;
+
+        UDP_MANAGER.bind_socket(dst_ip, dest_port).unwrap();
+
+        let payload = b"hello";
+
+        let mut header = UdpHeader {
+            source_port: 12345,
+            dest_port,
+            length: (UDP_HEADER_SIZE + payload.len()) as u16,
+            checksum: 0,
+        };
+        header.checksum = header.calculate_checksum(&src_ip, &dst_ip, payload);
+
+        let mut packet_bytes = Vec::new();
+        packet_bytes.extend_from_slice(&header.source_port.to_be_bytes());
+        packet_bytes.extend_from_slice(&header.dest_port.to_be_bytes());
+        packet_bytes.extend_from_slice(&header.length.to_be_bytes());
+        packet_bytes.extend_from_slice(&header.checksum.to_be_bytes());
+        packet_bytes.extend_from_slice(payload);
+
+        let packet = PacketBuffer::from_data(packet_bytes);
+
+        let result = process_packet(&stack, src_ip, dst_ip, packet);
+
+        assert!(result.is_ok());
+
+        let socket = UDP_MANAGER.get_socket(&dst_ip, dest_port).expect("socket should exist");
+        assert_eq!(socket.recv_buffer.len(), 1);
+        assert_eq!(socket.recv_buffer[0].data.as_slice(), payload);
+        assert_eq!(socket.recv_buffer[0].source_port, header.source_port);
+
+        UDP_MANAGER.unbind_socket(dst_ip, dest_port).unwrap();
+    }
 }
