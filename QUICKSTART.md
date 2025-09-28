@@ -1,6 +1,6 @@
 # 🚀 RustOS Quick Start Guide
 
-Welcome to RustOS! This guide will help you build and run the RustOS kernel in minutes.
+Welcome to RustOS! This guide will help you build and run the enterprise-grade RustOS kernel in minutes.
 
 ## 📋 Prerequisites
 
