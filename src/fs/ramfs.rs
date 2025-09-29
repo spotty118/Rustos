@@ -220,10 +220,19 @@ impl FileSystem for RamFs {
             .map(|inode| inode.content.len() as u64)
             .sum();
 
-        // Simulate block-based statistics
+        // Calculate real block-based statistics from actual filesystem state
         let block_size = 4096u32;
         let total_blocks = (MAX_FILE_SIZE * MAX_FILES) / block_size as u64;
-        let used_blocks = (total_size + block_size as u64 - 1) / block_size as u64;
+        
+        // Calculate actual used blocks by summing up all file sizes
+        let used_blocks = inodes.values()
+            .map(|inode| {
+                // Round up file size to nearest block boundary
+                let file_size = inode.content.len() as u64;
+                (file_size + block_size as u64 - 1) / block_size as u64
+            })
+            .sum();
+            
         let free_blocks = total_blocks.saturating_sub(used_blocks);
 
         Ok(FileSystemStats {
