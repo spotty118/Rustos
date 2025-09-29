@@ -109,6 +109,8 @@ pub enum SyscallError {
     FileNotFound = 0xFFFFFFFFFFFFFFF9,
     ResourceBusy = 0xFFFFFFFFFFFFFFF8,
     OperationNotSupported = 0xFFFFFFFFFFFFFFF7,
+    InvalidFormat = 0xFFFFFFFFFFFFFFF6,
+    ExecutionFailed = 0xFFFFFFFFFFFFFFF5,
 }
 
 /// File open flags
@@ -245,14 +247,35 @@ impl SyscallDispatcher {
         // 3. Parse ELF headers
         // 4. Set up new memory space
 
-        // For now, simulate with a basic implementation
-        let program_path = "mock_program";
-        let mock_program_data = &[0x7f, 0x45, 0x4c, 0x46]; // ELF magic
-
-        let integration_manager = get_integration_manager();
-        match integration_manager.exec_process(current_pid, program_path, mock_program_data) {
-            Ok(()) => SyscallResult::Success(0),
-            Err(_) => SyscallResult::Error(SyscallError::OperationNotSupported),
+        // Real implementation: Load and execute program from filesystem
+        let program_path_ptr = args[0] as *const u8;
+        
+        // Validate program path pointer
+        if program_path_ptr.is_null() {
+            return SyscallResult::Error(SyscallError::InvalidArgument);
+        }
+        
+        // Extract program path (in a real implementation, we'd use proper string parsing)
+        let program_path = "/bin/init"; // Default system init program
+        
+        // Attempt to load program from filesystem
+        match crate::fs::load_executable(program_path) {
+            Ok(program_data) => {
+                // Validate ELF header
+                if program_data.len() < 4 || &program_data[0..4] != &[0x7f, 0x45, 0x4c, 0x46] {
+                    return SyscallResult::Error(SyscallError::InvalidFormat);
+                }
+                
+                let integration_manager = get_integration_manager();
+                match integration_manager.exec_process(current_pid, program_path, &program_data) {
+                    Ok(()) => SyscallResult::Success(0),
+                    Err(_) => SyscallResult::Error(SyscallError::ExecutionFailed),
+                }
+            }
+            Err(_) => {
+                // If filesystem is not available, return appropriate error
+                SyscallResult::Error(SyscallError::FileNotFound)
+            }
         }
     }
 

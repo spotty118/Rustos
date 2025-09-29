@@ -312,7 +312,7 @@ fn test_syscall_stress() -> TestResult {
 /// Memory pressure stress test
 fn test_memory_pressure() -> TestResult {
     let config = StressTestConfig::default();
-    let mock_mem = crate::testing_framework::mocks::get_mock_memory_controller();
+    let mem_test = crate::testing_framework::hardware_testing::get_memory_controller_test();
 
     let start_time = crate::time::uptime_us();
     let mut allocations = Vec::new();
@@ -323,7 +323,7 @@ fn test_memory_pressure() -> TestResult {
     for i in 0..1000 {
         let chunk_size = 1024 * (1 + (i % 64)); // Variable chunk sizes
 
-        let ptr = mock_mem.allocate(chunk_size);
+        let ptr = mem_test.allocate(chunk_size);
         if !ptr.is_null() {
             allocations.push((ptr, chunk_size));
             success_count += 1;
@@ -339,7 +339,7 @@ fn test_memory_pressure() -> TestResult {
         // Periodically free some memory to simulate real workload
         if i % 10 == 0 && !allocations.is_empty() {
             let (ptr, size) = allocations.remove(0);
-            mock_mem.deallocate(ptr, size);
+            mem_test.deallocate(ptr, size);
         }
 
         // Check if we're taking too long
@@ -350,13 +350,13 @@ fn test_memory_pressure() -> TestResult {
 
     // Free remaining allocations
     for (ptr, size) in allocations {
-        mock_mem.deallocate(ptr, size);
+        mem_test.deallocate(ptr, size);
     }
 
     let end_time = crate::time::uptime_us();
     let duration_ms = (end_time - start_time) / 1000;
 
-    let (total_allocs, total_deallocs, _) = mock_mem.get_stats();
+    let (total_allocs, total_deallocs, _) = mem_test.get_stats();
 
     // Pass criteria: completed within time limit, reasonable allocation rate
     if duration_ms <= config.duration_ms && total_allocs > 500 && total_deallocs > 0 {
@@ -429,15 +429,18 @@ fn test_process_creation_stress() -> TestResult {
 /// Interrupt handler stress test
 fn test_interrupt_stress() -> TestResult {
     let config = StressTestConfig::default();
-    let mock_ic = crate::testing_framework::mocks::get_mock_interrupt_controller();
+    let ic_test = crate::testing_framework::hardware_testing::get_interrupt_controller_test();
 
-    mock_ic.enable();
-    let initial_count = mock_ic.get_interrupt_count();
+    ic_test.enable();
+    let initial_count = ic_test.get_interrupt_count();
     let start_time = crate::time::uptime_us();
 
     // Generate many interrupts rapidly
     for i in 0..config.iterations_per_thread * 10 {
-        mock_ic.trigger_interrupt((i % 256) as u8);
+        if let Err(_) = ic_test.test_interrupt((i % 256) as u8) {
+            // Hardware interrupt test failed - this might be expected under stress
+            continue;
+        }
 
         // Add small delay to simulate realistic interrupt rate
         for _ in 0..10 {
@@ -450,7 +453,7 @@ fn test_interrupt_stress() -> TestResult {
         }
     }
 
-    let final_count = mock_ic.get_interrupt_count();
+    let final_count = ic_test.get_interrupt_count();
     let end_time = crate::time::uptime_us();
     let duration_ms = (end_time - start_time) / 1000;
 

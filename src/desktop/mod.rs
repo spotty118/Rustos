@@ -93,11 +93,15 @@ impl Desktop {
             self.show_splash_screen();
         }
 
-        // Create some demo windows to show modern desktop
+        // Initialize essential system windows only when appropriate
         if let Some(ref mut wm) = self.window_manager {
-            wm.create_window("Welcome to RustOS", 50, 50, 400, 300);
-            wm.create_window("File Manager", 150, 150, 350, 250);
-            wm.create_window("System Info", 250, 250, 300, 200);
+            // Only create windows that provide actual functionality
+            // System monitor window - basic system information display
+            wm.create_window("System Monitor", 50, 50, 400, 300);
+            
+            // Terminal window for user interaction
+            wm.create_window("Terminal", 150, 150, 350, 250);
+            
             wm.force_redraw();
         }
 

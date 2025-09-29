@@ -420,12 +420,19 @@ impl VbeDriver {
             (0x0193, 3840, 2160, 32), // 3840x2160x32 (4K)
         ];
 
-        for (mode_num, width, height, bpp) in common_modes.iter() {
-            let mode_info = self.simulate_mode_info(*width, *height, *bpp);
-
-            if let Some(video_mode) = VideoMode::from_mode_info(*mode_num, &mode_info) {
-                if self.available_modes.push(video_mode).is_err() {
-                    break; // Vec is full
+        for (mode_num, _width, _height, _bpp) in common_modes.iter() {
+            // Query actual mode info from BIOS instead of simulation
+            match self.query_bios_mode_info(*mode_num) {
+                Ok(mode_info) => {
+                    if let Some(video_mode) = VideoMode::from_mode_info(*mode_num, &mode_info) {
+                        if self.available_modes.push(video_mode).is_err() {
+                            break; // Vec is full
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Skip modes that cannot be queried from BIOS
+                    continue;
                 }
             }
         }
@@ -433,21 +440,21 @@ impl VbeDriver {
         Ok(())
     }
 
-    /// Simulate mode info for common modes (in real implementation, this would query BIOS)
-    fn simulate_mode_info(&self, width: u16, height: u16, bpp: u8) -> ModeInfoBlock {
+    /// Query actual mode info from BIOS VBE interface
+    fn query_bios_mode_info(&self, mode: u16) -> Result<ModeInfoBlock, VbeError> {
+        // Call BIOS VBE function 0x01 to get mode information
         let mut info = ModeInfoBlock::default();
-
-        info.mode_attributes = mode_attributes::SUPPORTED
-            | mode_attributes::GRAPHICS_MODE
-            | mode_attributes::LINEAR_FRAMEBUFFER;
-
-        info.x_resolution = width;
-        info.y_resolution = height;
-        info.bits_per_pixel = bpp;
-        info.bytes_per_scan_line = width * ((bpp as u16 + 7) / 8);
-        info.memory_model = MemoryModel::DirectColor as u8;
-        info.number_of_planes = 1;
-        info.number_of_image_pages = 1;
+        
+        // Execute BIOS interrupt 0x10 with VBE function 0x4F01
+        let result = unsafe {
+            self.execute_bios_call(0x4F01, mode as u32, &mut info as *mut _ as u32)
+        };
+        
+        match result {
+            0x004F => Ok(info), // VBE success code
+            _ => Err(VbeError::BiosCallFailed),
+        }
+    }
 
         // Set up color masks based on pixel format
         match bpp {
