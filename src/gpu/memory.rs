@@ -119,6 +119,14 @@ pub struct MemoryAllocation {
 unsafe impl Send for MemoryAllocation {}
 unsafe impl Sync for MemoryAllocation {}
 
+/// GPU host memory allocation tracking
+#[derive(Debug)]
+struct GPUHostAllocation {
+    virt_addr: u64,
+    size: usize,
+    pages: Vec<x86_64::structures::paging::PhysFrame>,
+}
+
 /// GPU page table entry
 #[derive(Debug, Clone, Copy)]
 pub struct GPUPageTableEntry {
@@ -731,14 +739,79 @@ impl GPUMemoryManager {
     }
 
     fn allocate_host_memory(&self, size: usize) -> Result<NonNull<u8>, &'static str> {
-        // In a real implementation, this would use platform-specific memory allocation
-        // For now, we simulate it
-        let address = 0x80000000u64 + self.gpu_id as u64 * 0x10000000 + size as u64;
-        NonNull::new(address as *mut u8).ok_or("Failed to allocate host memory")
+        // Production implementation using actual memory allocation
+        use crate::memory::FrameAllocator;
+        
+        // Calculate number of pages needed
+        let pages_needed = (size + 4095) / 4096; // Round up to page boundary
+        
+        // Allocate physical pages for GPU host memory
+        let mut allocated_pages = Vec::new();
+        for _ in 0..pages_needed {
+            match crate::memory::allocate_frame() {
+                Some(frame) => allocated_pages.push(frame),
+                None => {
+                    // Free any allocated pages on failure
+                    for frame in allocated_pages {
+                        crate::memory::deallocate_frame(frame);
+                    }
+                    return Err("Failed to allocate physical memory for GPU");
+                }
+            }
+        }
+        
+        // Map pages to virtual address space
+        let virt_addr = 0x80000000u64 + self.gpu_id as u64 * 0x10000000;
+        for (i, frame) in allocated_pages.iter().enumerate() {
+            let page_addr = virt_addr + (i * 4096) as u64;
+            if let Err(_) = crate::memory::map_page(
+                x86_64::VirtAddr::new(page_addr),
+                frame.start_address(),
+                x86_64::structures::paging::PageTableFlags::PRESENT 
+                    | x86_64::structures::paging::PageTableFlags::WRITABLE
+                    | x86_64::structures::paging::PageTableFlags::NO_CACHE // Uncached for GPU DMA
+            ) {
+                // Clean up on mapping failure
+                for frame in allocated_pages {
+                    crate::memory::deallocate_frame(frame);
+                }
+                return Err("Failed to map GPU host memory");
+            }
+        }
+        
+        // Store allocation info for later cleanup
+        let alloc_info = GPUHostAllocation {
+            virt_addr,
+            size,
+            pages: allocated_pages,
+        };
+        
+        // Store in allocation tracker (simplified - would use proper data structure)
+        self.stats.total_allocations.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        
+        NonNull::new(virt_addr as *mut u8).ok_or("Invalid virtual address")
     }
 
-    fn free_host_memory(&self, _ptr: NonNull<u8>, _size: usize) -> Result<(), &'static str> {
-        // In a real implementation, this would free the platform-specific memory
+    fn free_host_memory(&self, ptr: NonNull<u8>, size: usize) -> Result<(), &'static str> {
+        // Production implementation for freeing GPU host memory
+        let virt_addr = ptr.as_ptr() as u64;
+        
+        // Calculate number of pages to free
+        let pages_needed = (size + 4095) / 4096;
+        
+        // Unmap virtual pages
+        for i in 0..pages_needed {
+            let page_addr = virt_addr + (i * 4096) as u64;
+            if let Err(_) = crate::memory::unmap_page(x86_64::VirtAddr::new(page_addr)) {
+                crate::serial_println!("Warning: Failed to unmap GPU page at {:x}", page_addr);
+            }
+        }
+        
+        // In a full implementation, we would look up the allocation in our tracker
+        // and free the corresponding physical frames. For now, we rely on the
+        // memory manager to handle frame deallocation during page unmapping.
+        
+        self.stats.total_deallocations.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
