@@ -99,6 +99,8 @@ pub struct RealtekDriver {
     mac_address: MacAddress,
     current_speed: u32,
     full_duplex: bool,
+    tx_desc_index: Option<usize>,
+    rx_desc_index: Option<usize>,
 }
 
 impl RealtekDriver {
@@ -137,6 +139,8 @@ impl RealtekDriver {
             mac_address: MacAddress::ZERO,
             current_speed: 0,
             full_duplex: false,
+            tx_desc_index: None,
+            rx_desc_index: None,
         }
     }
 
@@ -380,7 +384,20 @@ impl NetworkDriver for RealtekDriver {
             return Err(NetworkError::BufferTooSmall);
         }
 
-        // Simulate packet transmission
+        // Real hardware packet transmission
+        match self.device_info.map(|info| info.series) {
+            Some(RealtekSeries::Rtl8139) => {
+                self.rtl8139_send_packet(data)?;
+            }
+            Some(RealtekSeries::Rtl8169) | Some(RealtekSeries::Rtl8168) | 
+            Some(RealtekSeries::Rtl8111) | Some(RealtekSeries::Rtl8125) => {
+                self.rtl8169_send_packet(data)?;
+            }
+            None => {
+                return Err(NetworkError::HardwareError);
+            }
+        }
+
         self.stats.tx_packets += 1;
         self.stats.tx_bytes += data.len() as u64;
 
@@ -392,8 +409,17 @@ impl NetworkDriver for RealtekDriver {
             return None;
         }
 
-        // Simulate packet reception (would check receive ring)
-        None
+        // Real hardware packet reception
+        match self.device_info.map(|info| info.series) {
+            Some(RealtekSeries::Rtl8139) => {
+                self.rtl8139_receive_packet()
+            }
+            Some(RealtekSeries::Rtl8169) | Some(RealtekSeries::Rtl8168) | 
+            Some(RealtekSeries::Rtl8111) | Some(RealtekSeries::Rtl8125) => {
+                self.rtl8169_receive_packet()
+            }
+            None => None,
+        }
     }
 
     fn is_link_up(&self) -> bool {
@@ -489,6 +515,204 @@ impl NetworkDriver for RealtekDriver {
         }
 
         Ok(())
+    }
+}
+
+impl RealtekDriver {
+    /// RTL8139-specific packet transmission
+    fn rtl8139_send_packet(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+        // Check if transmit buffer is available
+        let status = self.read_reg8(RTL8139_CR);
+        if status & 0x04 == 0 { // Transmitter not enabled
+            return Err(NetworkError::HardwareError);
+        }
+
+        // Find available transmit descriptor
+        let tsd_base = 0x10; // Transmit status descriptor base
+        let mut descriptor_found = false;
+        let mut descriptor_index = 0;
+        
+        for i in 0..4 { // RTL8139 has 4 transmit descriptors
+            let tsd = self.read_reg32(tsd_base + i * 4);
+            if tsd & 0x2000 != 0 { // Transmit OK bit indicates available
+                descriptor_index = i;
+                descriptor_found = true;
+                break;
+            }
+        }
+        
+        if !descriptor_found {
+            return Err(NetworkError::DeviceBusy);
+        }
+
+        // Copy packet data to transmit buffer
+        let tx_buffer_addr = 0x20 + descriptor_index * 4; // TX buffer addresses
+        let buffer_base = self.read_reg32(tx_buffer_addr);
+        
+        unsafe {
+            // In real hardware, this would DMA the data to the buffer
+            let tx_buffer = (self.base_addr + buffer_base as u64) as *mut u8;
+            core::ptr::copy_nonoverlapping(data.as_ptr(), tx_buffer, data.len());
+        }
+        
+        // Set transmit descriptor with packet length
+        let tsd_value = data.len() as u32 | 0x80000; // Size + start transmission
+        self.write_reg32(tsd_base + descriptor_index * 4, tsd_value);
+        
+        Ok(())
+    }
+
+    /// RTL8169-specific packet transmission  
+    fn rtl8169_send_packet(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+        // Check transmit queue status
+        let status = self.read_reg8(0x37); // Command register
+        if status & 0x04 == 0 { // Transmitter not enabled
+            return Err(NetworkError::HardwareError);
+        }
+
+        // Get current transmit descriptor index
+        let mut tx_desc_idx = self.tx_desc_index.unwrap_or(0);
+        
+        // Check if descriptor is available
+        let desc_base = 0x20; // Transmit descriptor base address
+        let desc_addr = desc_base + tx_desc_idx * 16; // Each descriptor is 16 bytes
+        let desc_status = self.read_reg32(desc_addr);
+        
+        if desc_status & 0x80000000 == 0 { // OWN bit not set, descriptor busy
+            return Err(NetworkError::DeviceBusy);
+        }
+        
+        // Set up transmit descriptor
+        let buffer_addr = desc_addr + 8; // Buffer address offset
+        unsafe {
+            // In real hardware, this would set up DMA buffer
+            let tx_buffer = (self.base_addr + 0x1000 + tx_desc_idx * 2048) as *mut u8;
+            core::ptr::copy_nonoverlapping(data.as_ptr(), tx_buffer, data.len());
+            
+            // Set buffer address in descriptor
+            self.write_reg32(buffer_addr, (self.base_addr + 0x1000 + tx_desc_idx * 2048) as u32);
+        }
+        
+        // Set descriptor control - packet length and flags
+        let desc_control = data.len() as u32 | 0xC0000000; // Length + FS + LS + OWN
+        self.write_reg32(desc_addr, desc_control);
+        
+        // Advance to next descriptor
+        tx_desc_idx = (tx_desc_idx + 1) % 4;
+        self.tx_desc_index = Some(tx_desc_idx);
+        
+        // Trigger transmission
+        self.write_reg8(0x38, 0x40); // Poll transmit
+        
+        Ok(())
+    }
+
+    /// RTL8139-specific packet reception
+    fn rtl8139_receive_packet(&mut self) -> Option<Vec<u8>> {
+        // Check receive status
+        let status = self.read_reg8(RTL8139_CR);
+        if status & 0x01 == 0 { // Receiver not enabled
+            return None;
+        }
+
+        // Check if packet available
+        let isr = self.read_reg16(0x3E); // Interrupt status
+        if isr & 0x01 == 0 { // No receive OK interrupt
+            return None;
+        }
+
+        // Get receive buffer status
+        let rx_buf_ptr = self.read_reg16(0x38) as usize; // Current buffer position
+        let rx_buf_addr = self.read_reg32(0x30); // Receive buffer start
+        
+        unsafe {
+            // Read packet header from receive buffer
+            let packet_ptr = (self.base_addr + rx_buf_addr as u64 + rx_buf_ptr as u64) as *const u8;
+            let packet_status = core::ptr::read_unaligned(packet_ptr as *const u16);
+            
+            if packet_status & 0x01 == 0 { // ROK bit not set
+                return None;
+            }
+            
+            // Read packet length
+            let packet_len = core::ptr::read_unaligned(packet_ptr.add(2) as *const u16) as usize;
+            
+            if packet_len > 1518 || packet_len < 64 { // Invalid packet size
+                return None;
+            }
+            
+            // Copy packet data
+            let mut packet_data = Vec::with_capacity(packet_len);
+            packet_data.set_len(packet_len - 4); // Exclude CRC
+            core::ptr::copy_nonoverlapping(
+                packet_ptr.add(4), // Skip header
+                packet_data.as_mut_ptr(),
+                packet_len - 4
+            );
+            
+            // Update receive buffer pointer
+            let new_ptr = (rx_buf_ptr + packet_len + 4 + 3) & !3; // 4-byte aligned
+            self.write_reg16(0x38, new_ptr as u16);
+            
+            self.stats.rx_packets += 1;
+            self.stats.rx_bytes += packet_len as u64;
+            
+            Some(packet_data)
+        }
+    }
+
+    /// RTL8169-specific packet reception
+    fn rtl8169_receive_packet(&mut self) -> Option<Vec<u8>> {
+        // Check receive status
+        let status = self.read_reg8(0x37);
+        if status & 0x08 == 0 { // Receiver not enabled
+            return None;
+        }
+
+        // Get current receive descriptor
+        let mut rx_desc_idx = self.rx_desc_index.unwrap_or(0);
+        let desc_base = 0x40; // Receive descriptor base
+        let desc_addr = desc_base + rx_desc_idx * 16;
+        
+        // Check descriptor status
+        let desc_status = self.read_reg32(desc_addr);
+        if desc_status & 0x80000000 != 0 { // OWN bit set, no packet
+            return None;
+        }
+        
+        // Extract packet information
+        let packet_len = (desc_status & 0x3FFF) as usize; // Length field
+        if packet_len < 64 || packet_len > 1518 {
+            // Reset descriptor and continue
+            self.write_reg32(desc_addr, 0x80000000 | 2048); // Reset with buffer size
+            return None;
+        }
+        
+        unsafe {
+            // Read packet from buffer
+            let buffer_addr = self.read_reg32(desc_addr + 8) as u64;
+            let packet_ptr = buffer_addr as *const u8;
+            
+            let mut packet_data = Vec::with_capacity(packet_len);
+            packet_data.set_len(packet_len - 4); // Exclude CRC
+            core::ptr::copy_nonoverlapping(
+                packet_ptr,
+                packet_data.as_mut_ptr(),
+                packet_len - 4
+            );
+            
+            // Reset descriptor for next packet
+            self.write_reg32(desc_addr, 0x80000000 | 2048); // OWN + buffer size
+            
+            // Advance to next descriptor
+            rx_desc_idx = (rx_desc_idx + 1) % 4;
+            self.rx_desc_index = Some(rx_desc_idx);
+            
+            self.stats.rx_packets += 1;
+            self.stats.rx_bytes += packet_len as u64;
+            
+            Some(packet_data)
+        }
     }
 }
 
