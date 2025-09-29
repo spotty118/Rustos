@@ -948,25 +948,66 @@ impl GraphicsAccelerationEngine {
         }
     }
 
-    fn execute_vertex_stage(&mut self, _vertex_start: u32, vertex_count: u32) -> Result<(), &'static str> {
-        // Simulate vertex processing
-        let execution_time = vertex_count as u64 * 50; // 50ns per vertex
-        self.performance_counters.shader_execution_time_ns += execution_time;
-        Ok(())
+    fn execute_vertex_stage(&mut self, vertex_start: u32, vertex_count: u32) -> Result<(), &'static str> {
+        // Execute vertex processing on actual GPU hardware
+        match &mut self.gpu_device {
+            Some(device) => {
+                // Submit vertex processing command to GPU command buffer
+                let start_time = crate::time::uptime_ns();
+                
+                // Program vertex shader on hardware
+                device.submit_vertex_command(vertex_start, vertex_count)?;
+                
+                // Wait for GPU completion and measure actual execution time
+                device.wait_for_completion()?;
+                let execution_time = crate::time::uptime_ns() - start_time;
+                
+                self.performance_counters.shader_execution_time_ns += execution_time;
+                Ok(())
+            }
+            None => {
+                // No hardware available - return error instead of simulation
+                Err("GPU hardware not available")
+            }
+        }
     }
 
-    fn execute_rasterization(&mut self, _primitive_type: PrimitiveType, vertex_count: u32) -> Result<u32, &'static str> {
-        // Simulate rasterization and return pixel count
-        let pixel_count = vertex_count * 100; // Simplified estimation
-        Ok(pixel_count)
+    fn execute_rasterization(&mut self, primitive_type: PrimitiveType, vertex_count: u32) -> Result<u32, &'static str> {
+        // Execute rasterization on actual GPU hardware
+        match &mut self.gpu_device {
+            Some(device) => {
+                // Submit rasterization command to GPU
+                let pixel_count = device.execute_rasterization(primitive_type, vertex_count)?;
+                Ok(pixel_count)
+            }
+            None => {
+                // No hardware available - return error instead of simulation
+                Err("GPU hardware not available")
+            }
+        }
     }
 
     fn execute_fragment_stage(&mut self, pixel_count: u32) -> Result<(), &'static str> {
-        // Simulate fragment processing
-        self.performance_counters.pixels_shaded += pixel_count as u64;
-        let execution_time = pixel_count as u64 * 20; // 20ns per pixel
-        self.performance_counters.shader_execution_time_ns += execution_time;
-        Ok(())
+        // Execute fragment processing on actual GPU hardware
+        match &mut self.gpu_device {
+            Some(device) => {
+                let start_time = crate::time::uptime_ns();
+                
+                // Submit fragment processing command to GPU
+                device.submit_fragment_command(pixel_count)?;
+                device.wait_for_completion()?;
+                
+                let execution_time = crate::time::uptime_ns() - start_time;
+                
+                self.performance_counters.pixels_shaded += pixel_count as u64;
+                self.performance_counters.shader_execution_time_ns += execution_time;
+                Ok(())
+            }
+            None => {
+                // No hardware available - return error instead of simulation
+                Err("GPU hardware not available")
+            }
+        }
     }
 
     fn execute_indexed_rendering(&mut self, primitive_type: PrimitiveType, _index_start: u32, index_count: u32) -> Result<(), &'static str> {

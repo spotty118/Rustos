@@ -196,18 +196,18 @@ impl TestFramework {
         }
     }
 
-    /// Enable mock interfaces for testing
-    pub fn enable_mocks(&self) {
+    /// Enable hardware testing mode
+    pub fn enable_hardware_testing(&self) {
         self.mock_enabled.store(true, Ordering::Release);
     }
 
-    /// Disable mock interfaces
-    pub fn disable_mocks(&self) {
+    /// Disable hardware testing mode
+    pub fn disable_hardware_testing(&self) {
         self.mock_enabled.store(false, Ordering::Release);
     }
 
-    /// Check if mocks are enabled
-    pub fn mocks_enabled(&self) -> bool {
+    /// Check if hardware testing is enabled
+    pub fn hardware_testing_enabled(&self) -> bool {
         self.mock_enabled.load(Ordering::Acquire)
     }
 
@@ -221,29 +221,46 @@ impl TestFramework {
     }
 }
 
-/// Mock hardware interfaces for testing
-pub mod mocks {
+/// Hardware testing interfaces for production kernel testing
+pub mod hardware_testing {
     use super::*;
     use core::sync::atomic::{AtomicU32, AtomicU64};
 
-    /// Mock interrupt controller
-    pub struct MockInterruptController {
+    /// Real interrupt controller testing interface
+    pub struct InterruptControllerTest {
         interrupt_count: AtomicU64,
         enabled: AtomicBool,
+        latency_ns: AtomicU64,
     }
 
-    impl MockInterruptController {
+    impl InterruptControllerTest {
         pub const fn new() -> Self {
             Self {
                 interrupt_count: AtomicU64::new(0),
                 enabled: AtomicBool::new(false),
+                latency_ns: AtomicU64::new(0),
             }
         }
 
-        pub fn trigger_interrupt(&self, _vector: u8) {
-            if self.enabled.load(Ordering::Acquire) {
-                self.interrupt_count.fetch_add(1, Ordering::Relaxed);
+        pub fn test_interrupt(&self, vector: u8) -> Result<u64, &'static str> {
+            if !self.enabled.load(Ordering::Acquire) {
+                return Err("Interrupt controller not enabled");
             }
+
+            let start_time = crate::time::uptime_ns();
+            
+            // Test actual hardware interrupt controller
+            if let Some(apic) = crate::apic::get_local_apic() {
+                apic.send_ipi(0, vector); // Send to self for testing
+            } else {
+                return Err("APIC not available");
+            }
+            
+            let latency = crate::time::uptime_ns() - start_time;
+            self.latency_ns.store(latency, Ordering::Release);
+            self.interrupt_count.fetch_add(1, Ordering::Relaxed);
+            
+            Ok(latency)
         }
 
         pub fn enable(&self) {
@@ -257,16 +274,20 @@ pub mod mocks {
         pub fn get_interrupt_count(&self) -> u64 {
             self.interrupt_count.load(Ordering::Relaxed)
         }
+        
+        pub fn get_average_latency(&self) -> u64 {
+            self.latency_ns.load(Ordering::Acquire)
+        }
     }
 
-    /// Mock memory controller
-    pub struct MockMemoryController {
+    /// Real memory controller testing interface
+    pub struct MemoryControllerTest {
         allocations: AtomicU64,
         deallocations: AtomicU64,
         total_allocated: AtomicU64,
     }
 
-    impl MockMemoryController {
+    impl MemoryControllerTest {
         pub const fn new() -> Self {
             Self {
                 allocations: AtomicU64::new(0),
@@ -276,15 +297,23 @@ pub mod mocks {
         }
 
         pub fn allocate(&self, size: usize) -> *mut u8 {
-            self.allocations.fetch_add(1, Ordering::Relaxed);
-            self.total_allocated.fetch_add(size as u64, Ordering::Relaxed);
-            // Return a fake pointer for testing
-            0x1000 as *mut u8
+            // Use real kernel memory allocator
+            match crate::memory_basic::allocate(size) {
+                Ok(ptr) => {
+                    self.allocations.fetch_add(1, Ordering::Relaxed);
+                    self.total_allocated.fetch_add(size as u64, Ordering::Relaxed);
+                    ptr
+                }
+                Err(_) => core::ptr::null_mut(),
+            }
         }
 
-        pub fn deallocate(&self, _ptr: *mut u8, size: usize) {
-            self.deallocations.fetch_add(1, Ordering::Relaxed);
-            self.total_allocated.fetch_sub(size as u64, Ordering::Relaxed);
+        pub fn deallocate(&self, ptr: *mut u8, size: usize) {
+            if !ptr.is_null() {
+                crate::memory_basic::deallocate(ptr, size);
+                self.deallocations.fetch_add(1, Ordering::Relaxed);
+                self.total_allocated.fetch_sub(size as u64, Ordering::Relaxed);
+            }
         }
 
         pub fn get_stats(&self) -> (u64, u64, u64) {
@@ -296,27 +325,31 @@ pub mod mocks {
         }
     }
 
-    /// Mock timer for testing time-dependent functionality
-    pub struct MockTimer {
-        current_time: AtomicU64,
+    /// Real timer testing interface
+    pub struct TimerTest {
+        test_start_time: AtomicU64,
         tick_count: AtomicU64,
     }
 
-    impl MockTimer {
+    impl TimerTest {
         pub const fn new() -> Self {
             Self {
-                current_time: AtomicU64::new(0),
+                test_start_time: AtomicU64::new(0),
                 tick_count: AtomicU64::new(0),
             }
         }
 
-        pub fn tick(&self, elapsed_us: u64) {
-            self.current_time.fetch_add(elapsed_us, Ordering::Relaxed);
+        pub fn start_test(&self) {
+            self.test_start_time.store(crate::time::uptime_us(), Ordering::Relaxed);
+            self.tick_count.store(0, Ordering::Relaxed);
+        }
+
+        pub fn record_tick(&self) {
             self.tick_count.fetch_add(1, Ordering::Relaxed);
         }
 
-        pub fn get_time(&self) -> u64 {
-            self.current_time.load(Ordering::Relaxed)
+        pub fn get_elapsed_time(&self) -> u64 {
+            crate::time::uptime_us() - self.test_start_time.load(Ordering::Relaxed)
         }
 
         pub fn get_tick_count(&self) -> u64 {
@@ -324,26 +357,26 @@ pub mod mocks {
         }
 
         pub fn reset(&self) {
-            self.current_time.store(0, Ordering::Relaxed);
+            self.test_start_time.store(0, Ordering::Relaxed);
             self.tick_count.store(0, Ordering::Relaxed);
         }
     }
 
-    /// Global mock instances
-    static MOCK_INTERRUPT_CONTROLLER: MockInterruptController = MockInterruptController::new();
-    static MOCK_MEMORY_CONTROLLER: MockMemoryController = MockMemoryController::new();
-    static MOCK_TIMER: MockTimer = MockTimer::new();
+    /// Global hardware testing instances
+    static INTERRUPT_CONTROLLER_TEST: InterruptControllerTest = InterruptControllerTest::new();
+    static MEMORY_CONTROLLER_TEST: MemoryControllerTest = MemoryControllerTest::new();
+    static TIMER_TEST: TimerTest = TimerTest::new();
 
-    pub fn get_mock_interrupt_controller() -> &'static MockInterruptController {
-        &MOCK_INTERRUPT_CONTROLLER
+    pub fn get_interrupt_controller_test() -> &'static InterruptControllerTest {
+        &INTERRUPT_CONTROLLER_TEST
     }
 
-    pub fn get_mock_memory_controller() -> &'static MockMemoryController {
-        &MOCK_MEMORY_CONTROLLER
+    pub fn get_memory_controller_test() -> &'static MemoryControllerTest {
+        &MEMORY_CONTROLLER_TEST
     }
 
-    pub fn get_mock_timer() -> &'static MockTimer {
-        &MOCK_TIMER
+    pub fn get_timer_test() -> &'static TimerTest {
+        &TIMER_TEST
     }
 }
 
@@ -657,9 +690,9 @@ pub fn run_all_tests() -> TestStats {
         framework.add_suite(suite);
     }
 
-    framework.enable_mocks();
+    framework.enable_hardware_testing();
     let stats = framework.run_all_tests();
-    framework.disable_mocks();
+    framework.disable_hardware_testing();
 
     stats
 }

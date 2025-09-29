@@ -319,9 +319,9 @@ impl BenchmarkSuite {
                 let _ = crate::syscall::dispatch_syscall(&context);
             }
             "memory_allocation" => {
-                let mock_mem = crate::testing_framework::mocks::get_mock_memory_controller();
-                let ptr = mock_mem.allocate(1024);
-                mock_mem.deallocate(ptr, 1024);
+                let mem_test = crate::testing_framework::hardware_testing::get_memory_controller_test();
+                let ptr = mem_test.allocate(1024);
+                mem_test.deallocate(ptr, 1024);
             }
             "context_switch" => {
                 crate::scheduler::schedule();
@@ -362,9 +362,9 @@ impl BenchmarkSuite {
                     let _ = crate::syscall::dispatch_syscall(&context);
                 }
                 "memory_throughput" => {
-                    let mock_mem = crate::testing_framework::mocks::get_mock_memory_controller();
-                    let ptr = mock_mem.allocate(64);
-                    mock_mem.deallocate(ptr, 64);
+                    let mem_test = crate::testing_framework::hardware_testing::get_memory_controller_test();
+                    let ptr = mem_test.allocate(64);
+                    mem_test.deallocate(ptr, 64);
                 }
                 _ => {
                     // Default operation
@@ -669,18 +669,19 @@ fn benchmark_context_switch() -> TestResult {
 
 /// Benchmark interrupt latency
 fn benchmark_interrupt_latency() -> TestResult {
-    let mock_ic = crate::testing_framework::mocks::get_mock_interrupt_controller();
-    mock_ic.enable();
+    let ic_test = crate::testing_framework::hardware_testing::get_interrupt_controller_test();
+    ic_test.enable();
 
     let iterations = 10000;
     let mut total_latency = 0u64;
 
     for i in 0..iterations {
         let start = crate::performance_monitor::read_tsc();
-        mock_ic.trigger_interrupt((i % 256) as u8);
+        match ic_test.test_interrupt((i % 256) as u8) {
+            Ok(latency) => total_latency += latency,
+            Err(_) => return TestResult::Fail,
+        }
         let end = crate::performance_monitor::read_tsc();
-
-        total_latency += end - start;
     }
 
     let avg_latency_cycles = total_latency / iterations;
