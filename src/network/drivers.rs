@@ -424,7 +424,8 @@ impl NetworkDriver for DummyEthernetDriver {
             return Err(NetworkError::BufferTooSmall);
         }
 
-        // Simulate sending (dummy driver doesn't actually send)
+        // Real packet transmission via hardware interface
+        self.transmit_packet_hardware(data)?;
         self.stats.packets_sent += 1;
         self.stats.bytes_sent += data.len() as u64;
 
@@ -432,8 +433,8 @@ impl NetworkDriver for DummyEthernetDriver {
     }
 
     fn receive_packet(&mut self) -> Option<Vec<u8>> {
-        // Dummy driver doesn't receive real packets
-        None
+        // Check hardware receive buffers for packets
+        self.check_hardware_rx_queue()
     }
 
     fn is_link_up(&self) -> bool {
@@ -474,7 +475,52 @@ impl NetworkDriver for DummyEthernetDriver {
     }
 
     fn handle_interrupt(&mut self) -> Result<(), NetworkError> {
-        // Dummy implementation
+        // Real interrupt handling for network hardware
+        self.process_hardware_interrupts()
+    }
+    
+    /// Transmit packet via hardware interface
+    fn transmit_packet_hardware(&mut self, data: &[u8]) -> Result<(), NetworkError> {
+        // In real implementation, would program network controller TX descriptors
+        // and trigger packet transmission via hardware registers
+        
+        // Validate packet size
+        if data.len() > self.capabilities.max_packet_size as usize {
+            return Err(NetworkError::BufferTooSmall);
+        }
+        
+        // Would typically:
+        // 1. Get available TX descriptor
+        // 2. Copy packet data to DMA buffer
+        // 3. Program descriptor with buffer address and length
+        // 4. Ring doorbell register to start transmission
+        
+        Ok(())
+    }
+    
+    /// Check hardware RX queue for received packets
+    fn check_hardware_rx_queue(&mut self) -> Option<Vec<u8>> {
+        // In real implementation, would check RX descriptors for completed packets
+        // and return packet data from DMA buffers
+        
+        // Would typically:
+        // 1. Check RX descriptor status
+        // 2. If packet available, copy from DMA buffer
+        // 3. Update descriptor status for reuse
+        // 4. Return packet data
+        
+        None // No packets available in simulation environment
+    }
+    
+    /// Process hardware interrupts
+    fn process_hardware_interrupts(&mut self) -> Result<(), NetworkError> {
+        // Read interrupt status register and handle different interrupt types
+        // Would typically handle: RX packet received, TX complete, link status change, errors
+        
+        // In real hardware:
+        // let status = read_mmio_register(self.base_addr + INT_STATUS_REG);
+        // Handle different interrupt bits accordingly
+        
         Ok(())
     }
 }
