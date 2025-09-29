@@ -67,6 +67,7 @@ pub enum IoError {
     PermissionDenied,
     BufferTooSmall,
     DeviceBusy,
+    NoData,
 }
 
 /// I/O statistics
@@ -230,67 +231,130 @@ impl AsyncIoScheduler {
     fn programmed_io_transfer(&self, request: &IoRequest) -> Result<usize, IoError> {
         match request.request_type {
             IoRequestType::Read => {
-                // Simulate reading data
-                unsafe {
-                    core::ptr::write_bytes(request.buffer, 0xAA, request.size);
-                }
-                Ok(request.size)
+                // Perform actual hardware read via port I/O
+                self.hardware_read(request)
             }
-            IoRequestType::Write => {
-                // Simulate writing data
-                Ok(request.size)
+            IoRequestType::Write => {                        
+                // Perform actual hardware write via port I/O
+                self.hardware_write(request)
             }
             IoRequestType::NetworkReceive => {
-                // Simulate network packet reception
-                self.simulate_network_receive(request)
+                // Interface with actual network hardware
+                self.network_hardware_receive(request)
             }
             IoRequestType::NetworkTransmit => {
-                // Simulate network packet transmission
-                self.simulate_network_transmit(request)
+                // Interface with actual network hardware
+                self.network_hardware_transmit(request)
             }
             _ => Err(IoError::InvalidRequest),
         }
     }
 
-    /// Simulate network packet reception
-    fn simulate_network_receive(&self, request: &IoRequest) -> Result<usize, IoError> {
-        // In a real implementation, this would interface with network hardware
+    /// Interface with network hardware for packet reception
+    fn network_hardware_receive(&self, request: &IoRequest) -> Result<usize, IoError> {
         if request.size > 1500 {
             return Err(IoError::BufferTooSmall); // MTU exceeded
         }
 
-        // Simulate receiving a packet
-        unsafe {
-            // Write ethernet header
-            let eth_header = request.buffer;
-            core::ptr::write_bytes(eth_header, 0x00, 14); // Ethernet header size
-
-            // Write IP header
-            let ip_header = eth_header.add(14);
-            core::ptr::write_bytes(ip_header, 0x45, 20); // IP header size
-
-            // Write payload
-            let payload = ip_header.add(20);
-            let payload_size = request.size.saturating_sub(34);
-            core::ptr::write_bytes(payload, 0xFF, payload_size);
+        // Access network device via driver manager
+        if let Some(network_driver) = crate::network::drivers::with_driver_manager(|dm| {
+            dm.get_device(request.device_id)
+        }).flatten() {
+            // Attempt to receive packet from hardware
+            match network_driver.receive_packet() {
+                Some(packet_data) => {
+                    let copy_size = packet_data.len().min(request.size);
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            packet_data.as_ptr(),
+                            request.buffer,
+                            copy_size
+                        );
+                    }
+                    Ok(copy_size)
+                }
+                None => Err(IoError::NoData), // No packet available
+            }
+        } else {
+            Err(IoError::DeviceNotFound)
         }
-
-        Ok(request.size.min(1500))
     }
 
-    /// Simulate network packet transmission
-    fn simulate_network_transmit(&self, request: &IoRequest) -> Result<usize, IoError> {
-        // In a real implementation, this would queue packets for transmission
+    /// Interface with network hardware for packet transmission
+    fn network_hardware_transmit(&self, request: &IoRequest) -> Result<usize, IoError> {
         if request.size > 1500 {
             return Err(IoError::BufferTooSmall); // MTU exceeded
         }
 
-        // Simulate transmission delay
-        for _ in 0..100 {
-            unsafe { core::arch::asm!("nop"); }
+        // Access network device via driver manager
+        if let Some(mut network_driver) = crate::network::drivers::with_driver_manager(|dm| {
+            dm.get_device(request.device_id)
+        }).flatten() {
+            // Create packet data from buffer
+            let packet_data = unsafe {
+                core::slice::from_raw_parts(request.buffer, request.size)
+            };
+            
+            // Transmit packet via hardware
+            match network_driver.send_packet(packet_data) {
+                Ok(()) => Ok(request.size),
+                Err(_) => Err(IoError::HardwareError),
+            }
+        } else {
+            Err(IoError::DeviceNotFound)
         }
+    }
 
-        Ok(request.size)
+    /// Perform hardware read operation
+    fn hardware_read(&self, request: &IoRequest) -> Result<usize, IoError> {
+        match request.request_type {
+            IoRequestType::Read => {
+                // Use storage driver for disk reads
+                if let Some(storage_driver) = crate::drivers::storage::get_device(request.device_id) {
+                    storage_driver.read_sectors(request.offset, request.size, request.buffer)
+                        .map_err(|_| IoError::HardwareError)
+                } else {
+                    // Fall back to direct port I/O for other devices
+                    unsafe {
+                        // Read from I/O port based on device_id
+                        use x86_64::instructions::port::Port;
+                        let mut port = Port::<u8>::new(request.device_id as u16);
+                        for i in 0..request.size {
+                            *request.buffer.add(i) = port.read();
+                        }
+                    }
+                    Ok(request.size)
+                }
+            }
+            _ => Err(IoError::InvalidRequest),
+        }
+    }
+
+    /// Perform hardware write operation
+    fn hardware_write(&self, request: &IoRequest) -> Result<usize, IoError> {
+        match request.request_type {
+            IoRequestType::Write => {
+                // Use storage driver for disk writes
+                if let Some(storage_driver) = crate::drivers::storage::get_device(request.device_id) {
+                    let data = unsafe { core::slice::from_raw_parts(request.buffer, request.size) };
+                    storage_driver.write_sectors(request.offset, data)
+                        .map(|_| request.size)
+                        .map_err(|_| IoError::HardwareError)
+                } else {
+                    // Fall back to direct port I/O for other devices
+                    unsafe {
+                        // Write to I/O port based on device_id
+                        use x86_64::instructions::port::Port;
+                        let mut port = Port::<u8>::new(request.device_id as u16);
+                        for i in 0..request.size {
+                            port.write(*request.buffer.add(i));
+                        }
+                    }
+                    Ok(request.size)
+                }
+            }
+            _ => Err(IoError::InvalidRequest),
+        }
     }
 
     /// Check for completed requests

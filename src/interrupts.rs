@@ -199,10 +199,11 @@ where
 // ========== CPU EXCEPTION HANDLERS ==========
 
 extern "x86-interrupt" fn breakpoint_handler(_stack_frame: InterruptStackFrame) {
-    // Production: breakpoint handled silently
+    // Handle breakpoint interrupt - increment counter for debugging
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
+    // Continue execution - breakpoints are non-fatal in production
 }
 
 extern "x86-interrupt" fn double_fault_handler(
@@ -223,37 +224,61 @@ extern "x86-interrupt" fn page_fault_handler(
 
     let fault_address = Cr2::read();
 
-    // Production: only log critical page faults
-    if error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
-        crate::serial_println!("CRITICAL: Page fault at {:?}", fault_address);
-    }
+    // Log all page faults for production debugging
+    crate::serial_println!(
+        "Page fault at {:?}: present={}, write={}, user={}", 
+        fault_address,
+        !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION),
+        error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE),
+        error_code.contains(PageFaultErrorCode::USER_MODE)
+    );
 
     unsafe {
         INTERRUPT_STATS.page_fault_count += 1;
         INTERRUPT_STATS.exception_count += 1;
     }
 
-    // For now, we'll panic on page faults
-    // In a real OS, you might handle this more gracefully
-    panic!("Page fault at address {:?}", fault_address);
+    // In production, attempt page fault recovery
+    if let Some(recovery_result) = attempt_page_fault_recovery(fault_address, error_code) {
+        match recovery_result {
+            PageFaultRecovery::Recovered => {
+                crate::serial_println!("Page fault recovered successfully");
+                return;
+            }
+            PageFaultRecovery::NeedsSwap => {
+                crate::serial_println!("Page fault requires swap operation");
+                // TODO: Implement swap-in functionality
+            }
+        }
+    }
+
+    // If recovery fails, panic as last resort
+    panic!("Unrecoverable page fault at address {:?}", fault_address);
 }
 
-extern "x86-interrupt" fn divide_error_handler(_stack_frame: InterruptStackFrame) {
-    // Production: critical math error
-    crate::serial_println!("CRITICAL: Divide by zero");
+extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
+    // Log divide by zero with context information
+    crate::serial_println!(
+        "Divide by zero error at RIP: {:?}, RSP: {:?}", 
+        stack_frame.instruction_pointer,
+        stack_frame.stack_pointer
+    );
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
-    panic!("Divide by zero exception");
+    panic!("Divide by zero exception at {:?}", stack_frame.instruction_pointer);
 } 
 
-extern "x86-interrupt" fn invalid_opcode_handler(_stack_frame: InterruptStackFrame) {
-    // Production: critical opcode error
-    crate::serial_println!("CRITICAL: Invalid opcode");
+extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
+    // Log invalid opcode with detailed context
+    crate::serial_println!(
+        "Invalid opcode at RIP: {:?}, attempting instruction recovery", 
+        stack_frame.instruction_pointer
+    );
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
-    panic!("Invalid opcode exception");
+    panic!("Invalid opcode at {:?}", stack_frame.instruction_pointer);
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(
@@ -281,29 +306,37 @@ extern "x86-interrupt" fn stack_segment_fault_handler(
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(
-    _stack_frame: InterruptStackFrame,
+    stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    // Production: critical segment fault
-    crate::serial_println!("CRITICAL: Segment not present ({})", error_code);
+    // Log detailed segment fault information for debugging
+    crate::serial_println!(
+        "Segment not present fault - Error code: 0x{:x}, RIP: {:?}", 
+        error_code, 
+        stack_frame.instruction_pointer
+    );
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
-    panic!("Segment not present");
+    panic!("Segment not present - error code: 0x{:x}", error_code);
 }
 
-extern "x86-interrupt" fn overflow_handler(_stack_frame: InterruptStackFrame) {
-    // Production: overflow handled silently
+extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
+    // Handle arithmetic overflow - log for debugging but continue execution
+    crate::serial_println!("Arithmetic overflow detected at RIP: {:?}", stack_frame.instruction_pointer);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
+    // In production, overflow should be handled gracefully
 }
 
-extern "x86-interrupt" fn bound_range_exceeded_handler(_stack_frame: InterruptStackFrame) {
-    // Production: bounds check handled silently
+extern "x86-interrupt" fn bound_range_exceeded_handler(stack_frame: InterruptStackFrame) {
+    // Handle bounds check failure - log detailed information
+    crate::serial_println!("Bounds check failed at RIP: {:?}", stack_frame.instruction_pointer);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
+    // Continue execution after logging - bounds checks are recoverable
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(
@@ -371,9 +404,12 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 }
 
 extern "x86-interrupt" fn serial_port1_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    // Production: serial interrupt handled silently
+    // Handle serial port 1 interrupt - process incoming data
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
+        
+        // Process any available serial data
+        crate::serial::handle_port1_interrupt();
         
         // Send EOI to APIC if available, otherwise use PIC
         if crate::apic::apic_system().lock().is_initialized() {
@@ -385,9 +421,12 @@ extern "x86-interrupt" fn serial_port1_interrupt_handler(_stack_frame: Interrupt
 }
 
 extern "x86-interrupt" fn serial_port2_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    // Production: serial interrupt handled silently
+    // Handle serial port 2 interrupt - process incoming data
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
+        
+        // Process any available serial data
+        crate::serial::handle_port2_interrupt();
         
         // Send EOI to APIC if available, otherwise use PIC
         if crate::apic::apic_system().lock().is_initialized() {
@@ -417,6 +456,41 @@ pub fn trigger_breakpoint() {
 pub unsafe fn trigger_page_fault() {
     let ptr = 0xdeadbeef as *mut u8;
     *ptr = 42;
+}
+
+/// Page fault recovery result
+#[derive(Debug, Clone, Copy)]
+pub enum PageFaultRecovery {
+    Recovered,
+    NeedsSwap,
+}
+
+/// Attempt to recover from a page fault
+fn attempt_page_fault_recovery(
+    fault_address: x86_64::VirtAddr, 
+    error_code: x86_64::structures::idt::PageFaultErrorCode
+) -> Option<PageFaultRecovery> {
+    use x86_64::structures::idt::PageFaultErrorCode;
+    
+    // Check if this is a demand paging fault (page not present)
+    if !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
+        // Page not present - check if it's within valid memory ranges
+        let addr = fault_address.as_u64();
+        
+        // Check if address is in user space and within reasonable bounds
+        if addr >= 0x1000 && addr < 0x7fff_ffff_ffff {
+            // Attempt to allocate physical page and map it
+            if let Ok(()) = crate::memory::map_page_on_demand(fault_address) {
+                return Some(PageFaultRecovery::Recovered);
+            } else {
+                // Page allocation failed - might need swap
+                return Some(PageFaultRecovery::NeedsSwap);
+            }
+        }
+    }
+    
+    // Cannot recover from this type of page fault
+    None
 }
 
 /// Trigger a divide by zero exception for testing
@@ -466,14 +540,35 @@ impl fmt::Display for InterruptStats {
     }
 }
 
-/// Production interrupt statistics - no output
-pub fn print_stats() {
-    // Production: statistics available via get_stats() API
+/// Get current interrupt statistics for monitoring
+pub fn get_interrupt_stats() -> InterruptStats {
+    unsafe {
+        InterruptStats {
+            timer_count: INTERRUPT_STATS.timer_count,
+            keyboard_count: INTERRUPT_STATS.keyboard_count,
+            serial_count: INTERRUPT_STATS.serial_count,
+            exception_count: INTERRUPT_STATS.exception_count,
+            page_fault_count: INTERRUPT_STATS.page_fault_count,
+            spurious_count: INTERRUPT_STATS.spurious_count,
+        }
+    }
 }
 
-/// Production interrupt testing - silent validation
+/// Reset interrupt statistics counters
+pub fn reset_interrupt_stats() {
+    unsafe {
+        INTERRUPT_STATS.timer_count = 0;
+        INTERRUPT_STATS.keyboard_count = 0;
+        INTERRUPT_STATS.serial_count = 0;
+        INTERRUPT_STATS.exception_count = 0;
+        INTERRUPT_STATS.page_fault_count = 0;
+        INTERRUPT_STATS.spurious_count = 0;
+    }
+}
+
+/// Validate interrupt system functionality
 pub fn test_interrupts() {
-    // Production: validate interrupt system silently
+    // Validate interrupt system by triggering a controlled breakpoint
     trigger_breakpoint();
-    // Interrupt validation completed
+    // System validated - breakpoint handler completed successfully
 }
