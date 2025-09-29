@@ -218,13 +218,15 @@ build_kernel() {
     fi
 
     print_status "Compiling kernel..."
-    cargo build $target_flag $build_args
+    cargo build -Zbuild-std=core,compiler_builtins,alloc $target_flag $build_args
 
-    local binary_name="kernel"
+    local binary_name="rustos"
+    # Extract target name without .json extension for path
+    local target_path="${TARGET%.json}"
     if [ "$RELEASE" = true ]; then
-        KERNEL_BINARY="$BUILD_DIR/$TARGET/release/$binary_name"
+        KERNEL_BINARY="$BUILD_DIR/$target_path/release/$binary_name"
     else
-        KERNEL_BINARY="$BUILD_DIR/$TARGET/debug/$binary_name"
+        KERNEL_BINARY="$BUILD_DIR/$target_path/debug/$binary_name"
     fi
 
     if [ -f "$KERNEL_BINARY" ]; then
@@ -259,7 +261,7 @@ create_bootimage() {
     print_status "Building BIOS and UEFI bootable images with bootloader_api..."
     
     # Build using the new bootloader crate
-    cargo build $build_args --target "$TARGET"
+    cargo build -Zbuild-std=core,compiler_builtins,alloc $build_args --target "$TARGET"
     
     # The new bootloader creates both BIOS and UEFI images
     if [ "$RELEASE" = true ]; then

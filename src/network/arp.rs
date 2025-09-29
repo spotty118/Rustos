@@ -4,7 +4,7 @@
 //! in the RustOS network stack, including packet handling, table management, and caching.
 
 // use crate::{format, vec}; // Unused
-use crate::{BTreeMap, Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 // use alloc::string::ToString; // Unused
 // use core::time::Duration; // Not available in no_std
 

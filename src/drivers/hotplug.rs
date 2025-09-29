@@ -8,7 +8,6 @@ use alloc::{vec::Vec, string::{String, ToString}, collections::BTreeMap, boxed::
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
-use crate::println;
 
 /// Hot-plug event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,7 +224,7 @@ impl HotplugManager {
     /// Enable/disable hot-plug support
     pub fn set_enabled(&self, enabled: bool) {
         *self.enabled.write() = enabled;
-        println!("Hot-plug support {}", if enabled { "enabled" } else { "disabled" });
+        // Production: hot-plug status changed silently
     }
 
     /// Check if hot-plug is enabled
@@ -243,7 +242,7 @@ impl HotplugManager {
     /// Register an event handler
     pub fn register_handler(&self, handler: Box<dyn HotplugHandler>) {
         let mut handlers = self.handlers.write();
-        println!("Registered hot-plug handler: {}", handler.name());
+        // Production: handler registered silently
         handlers.push(handler);
     }
 
@@ -292,9 +291,7 @@ impl HotplugManager {
 
         self.queue_event(notification);
         
-        println!("Hot-plug: Added device {} ({}:{:04x}:{:04x})", 
-            device_id, device_info.get_vendor_name(), 
-            device_info.vendor_id, device_info.device_id);
+        // Production: device added silently
 
         // Try to find and load a driver
         self.try_load_driver(&device_id)?;
@@ -348,7 +345,7 @@ impl HotplugManager {
             devices.remove(device_id);
         }
 
-        println!("Hot-plug: Removed device {}", device_id);
+        // Production: device removed silently
         Ok(())
     }
 
@@ -403,12 +400,9 @@ impl HotplugManager {
 
             self.queue_event(notification);
             
-            println!("Hot-plug: Loaded driver '{}' for device {}", 
-                driver_match.driver_name, device_id);
+            // Production: driver loaded silently
         } else {
-            println!("Hot-plug: No driver found for device {} ({}:{:04x}:{:04x})", 
-                device_id, device_info.get_vendor_name(), 
-                device_info.vendor_id, device_info.device_id);
+            // Production: no driver available (expected for unknown devices)
         }
 
         Ok(())
@@ -434,8 +428,8 @@ impl HotplugManager {
 
         for event in events {
             for handler in handlers.iter() {
-                if let Err(e) = handler.handle_event(&event) {
-                    println!("Hot-plug handler '{}' error: {}", handler.name(), e);
+                if let Err(_e) = handler.handle_event(&event) {
+                    // Production: handler error logged internally
                 }
             }
             processed += 1;
@@ -501,7 +495,7 @@ impl HotplugManager {
         // TODO: Implement actual device scanning
         // This would typically scan PCI bus, USB ports, etc.
         
-        println!("Hot-plug: Scanning for new devices...");
+        // Production: device scan in progress
         Ok(0)
     }
 }
@@ -531,13 +525,8 @@ impl DefaultHotplugHandler {
 }
 
 impl HotplugHandler for DefaultHotplugHandler {
-    fn handle_event(&self, notification: &HotplugNotification) -> Result<(), HotplugError> {
-        println!("Hot-plug event: {} for device {} at {}", 
-            notification.event, notification.device_id, notification.timestamp);
-        
-        if let Some(ref data) = notification.data {
-            println!("  Data: {}", data);
-        }
+    fn handle_event(&self, _notification: &HotplugNotification) -> Result<(), HotplugError> {
+        // Production: hot-plug event processed silently
         
         Ok(())
     }
@@ -563,7 +552,7 @@ pub fn init() -> HotplugResult<()> {
     // Enable hot-plug support
     HOTPLUG_MANAGER.set_enabled(true);
 
-    println!("✓ Hot-plug subsystem initialized");
+    // Production: hot-plug subsystem initialized
     Ok(())
 }
 

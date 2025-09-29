@@ -3,7 +3,7 @@
 //! This module provides IPv4 packet handling, routing, fragmentation,
 //! and related network layer functionality for the RustOS network stack.
 
-use crate::{vec, BTreeMap, String, Vec};
+use alloc::{vec, collections::BTreeMap, string::String, vec::Vec};
 // use core::mem::size_of;
 
 use crate::network::{Ipv4Address, NetworkError, Protocol};

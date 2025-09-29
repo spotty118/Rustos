@@ -10,7 +10,6 @@ pub mod hotplug;
 // Removed unused imports
 use alloc::string::String;
 use core::fmt;
-use crate::println;
 
 // Re-export VBE driver functionality
 pub use vbe::{
@@ -331,21 +330,17 @@ static mut GRAPHICS_INITIALIZED: bool = false;
 /// Initialize the global driver manager (simplified)
 pub fn init_drivers() -> Result<(), &'static str> {
     // Initialize PCI subsystem
-    if let Err(e) = init_pci() {
-        println!("❌ Failed to initialize PCI: {}", e);
+    if let Err(_e) = init_pci() {
         return Err("PCI initialization failed");
     }
 
     // Initialize hot-plug subsystem
-    if let Err(e) = init_hotplug() {
-        println!("❌ Failed to initialize hot-plug: {}", e);
+    if let Err(_e) = init_hotplug() {
         return Err("Hot-plug initialization failed");
     }
 
     // Process any initial hot-plug events
-    if let Err(e) = process_hotplug_events() {
-        println!("❌ Failed to process hot-plug events: {}", e);
-    }
+    let _ = process_hotplug_events();
 
     unsafe {
         DRIVER_MANAGER_INITIALIZED = true;
@@ -353,14 +348,10 @@ pub fn init_drivers() -> Result<(), &'static str> {
     }
 
     // Display driver statistics
-    let pci_stats = get_pci_stats();
-    let hotplug_stats = get_hotplug_stats();
+    let _pci_stats = get_pci_stats();
+    let _hotplug_stats = get_hotplug_stats();
     
-    println!("✓ Driver subsystem initialized:");
-    println!("  PCI devices: {}", pci_stats.total_devices);
-    println!("  Hot-plug devices: {} ({} active)", 
-        hotplug_stats.total_devices, hotplug_stats.active_devices);
-    println!("  Devices with drivers: {}", hotplug_stats.devices_with_drivers);
+    // Production: drivers initialized silently
 
     Ok(())
 }

@@ -3,7 +3,6 @@
 //! This module handles Internet Protocol packet parsing, routing, and forwarding.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack, Protocol};
-use crate::println;
 use alloc::vec::Vec;
 
 /// IPv4 header minimum size
@@ -221,17 +220,12 @@ impl IPv6Header {
 pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffer) -> NetworkResult<()> {
     let header = IPv4Header::parse(&mut packet)?;
     
-    println!("IPv4 packet: {} -> {} (proto: {}, len: {})",
-        header.source, header.destination, header.protocol, header.total_length);
+    // Production: log only errors, not every packet
 
     // Verify checksum
     let calculated_checksum = header.calculate_checksum();
     if calculated_checksum != header.checksum {
-        println!(
-            "IPv4 checksum mismatch: calculated 0x{:04x}, header 0x{:04x}",
-            calculated_checksum,
-            header.checksum
-        );
+        // Checksum mismatch - drop packet silently in production
         return Err(NetworkError::InvalidPacket);
     }
 
@@ -243,7 +237,7 @@ pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
 
     // Handle fragmentation
     if header.is_fragmented() {
-        println!("Fragmented packets not yet supported");
+        // Fragmented packets not supported - drop silently
         return Ok(());
     }
 
@@ -251,7 +245,7 @@ pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
     let protocol = Protocol::from(header.protocol);
     match protocol {
         Protocol::ICMP => {
-            process_icmp_packet(network_stack, header, packet)
+            super::icmp::process_icmp_packet(network_stack, header.source, header.destination, packet)
         }
         Protocol::TCP => {
             super::tcp::process_packet(network_stack, header.source, header.destination, packet)
@@ -260,7 +254,7 @@ pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
             super::udp::process_packet(network_stack, header.source, header.destination, packet)
         }
         _ => {
-            println!("Unsupported IP protocol: {}", header.protocol);
+            // Unsupported protocol - drop silently
             Ok(())
         }
     }
@@ -270,8 +264,7 @@ pub fn process_ipv4_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
 pub fn process_ipv6_packet(network_stack: &NetworkStack, mut packet: PacketBuffer) -> NetworkResult<()> {
     let header = IPv6Header::parse(&mut packet)?;
     
-    println!("IPv6 packet: {} -> {} (next: {}, len: {})",
-        header.source, header.destination, header.next_header, header.payload_length);
+    // Production: process packet without debug output
 
     // Check if packet is for us
     if !is_packet_for_us(&header.destination) {
@@ -282,7 +275,7 @@ pub fn process_ipv6_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
     // Process based on next header
     match header.next_header {
         58 => { // ICMPv6
-            process_icmpv6_packet(network_stack, header, packet)
+            super::icmp::process_icmpv6_packet(network_stack, header.source, header.destination, packet)
         }
         6 => { // TCP
             super::tcp::process_packet(network_stack, header.source, header.destination, packet)
@@ -291,7 +284,7 @@ pub fn process_ipv6_packet(network_stack: &NetworkStack, mut packet: PacketBuffe
             super::udp::process_packet(network_stack, header.source, header.destination, packet)
         }
         _ => {
-            println!("Unsupported IPv6 next header: {}", header.next_header);
+            // Unsupported next header - drop silently
             Ok(())
         }
     }
@@ -325,18 +318,18 @@ fn forward_ipv4_packet(
     // Decrement TTL
     if header.ttl <= 1 {
         // Send ICMP Time Exceeded
-        println!("TTL expired, dropping packet");
+        // TTL expired - drop packet
         return Ok(());
     }
     header.ttl -= 1;
 
     // Find route to destination
-    if let Some(route) = network_stack.find_route(&header.destination) {
-        println!("Forwarding packet to {} via {}", header.destination, route.interface);
+    if let Some(_route) = network_stack.find_route(&header.destination) {
+        // Forward packet via route
         // TODO: Implement actual packet forwarding
         Ok(())
     } else {
-        println!("No route to {}", header.destination);
+        // No route found - drop packet
         // Send ICMP Destination Unreachable
         Ok(())
     }
@@ -351,117 +344,23 @@ fn forward_ipv6_packet(
     // Decrement hop limit
     if header.hop_limit <= 1 {
         // Send ICMPv6 Time Exceeded
-        println!("Hop limit expired, dropping packet");
+        // Hop limit expired - drop packet
         return Ok(());
     }
     header.hop_limit -= 1;
 
     // Find route to destination
-    if let Some(route) = network_stack.find_route(&header.destination) {
-        println!("Forwarding IPv6 packet to {} via {}", header.destination, route.interface);
+    if let Some(_route) = network_stack.find_route(&header.destination) {
+        // Forward IPv6 packet via route
         // TODO: Implement actual packet forwarding
         Ok(())
     } else {
-        println!("No route to {}", header.destination);
+        // No route found - drop packet
         // Send ICMPv6 Destination Unreachable
         Ok(())
     }
 }
 
-/// Process ICMP packet
-fn process_icmp_packet(
-    _network_stack: &NetworkStack,
-    ip_header: IPv4Header,
-    mut packet: PacketBuffer,
-) -> NetworkResult<()> {
-    if packet.remaining() < 8 {
-        return Err(NetworkError::InvalidPacket);
-    }
-
-    let icmp_type = packet.read(1).ok_or(NetworkError::InvalidPacket)?[0];
-    let icmp_code = packet.read(1).ok_or(NetworkError::InvalidPacket)?[0];
-    let checksum_bytes = packet.read(2).ok_or(NetworkError::InvalidPacket)?;
-    let _checksum = u16::from_be_bytes([checksum_bytes[0], checksum_bytes[1]]);
-    let _rest_bytes = packet.read(4).ok_or(NetworkError::InvalidPacket)?;
-
-    println!("ICMP packet: type={}, code={} from {}", icmp_type, icmp_code, ip_header.source);
-
-    match icmp_type {
-        8 => {
-            // Echo Request (ping)
-            println!("ICMP Echo Request from {}", ip_header.source);
-            // TODO: Send Echo Reply
-        }
-        0 => {
-            // Echo Reply
-            println!("ICMP Echo Reply from {}", ip_header.source);
-        }
-        3 => {
-            // Destination Unreachable
-            println!("ICMP Destination Unreachable from {} (code: {})", ip_header.source, icmp_code);
-        }
-        11 => {
-            // Time Exceeded
-            println!("ICMP Time Exceeded from {} (code: {})", ip_header.source, icmp_code);
-        }
-        _ => {
-            println!("Unknown ICMP type: {} from {}", icmp_type, ip_header.source);
-        }
-    }
-
-    Ok(())
-}
-
-/// Process ICMPv6 packet
-fn process_icmpv6_packet(
-    _network_stack: &NetworkStack,
-    ip_header: IPv6Header,
-    mut packet: PacketBuffer,
-) -> NetworkResult<()> {
-    if packet.remaining() < 4 {
-        return Err(NetworkError::InvalidPacket);
-    }
-
-    let icmp_type = packet.read(1).ok_or(NetworkError::InvalidPacket)?[0];
-    let icmp_code = packet.read(1).ok_or(NetworkError::InvalidPacket)?[0];
-    let checksum_bytes = packet.read(2).ok_or(NetworkError::InvalidPacket)?;
-    let _checksum = u16::from_be_bytes([checksum_bytes[0], checksum_bytes[1]]);
-
-    println!("ICMPv6 packet: type={}, code={} from {}", icmp_type, icmp_code, ip_header.source);
-
-    match icmp_type {
-        128 => {
-            // Echo Request
-            println!("ICMPv6 Echo Request from {}", ip_header.source);
-            // TODO: Send Echo Reply
-        }
-        129 => {
-            // Echo Reply
-            println!("ICMPv6 Echo Reply from {}", ip_header.source);
-        }
-        1 => {
-            // Destination Unreachable
-            println!("ICMPv6 Destination Unreachable from {} (code: {})", ip_header.source, icmp_code);
-        }
-        3 => {
-            // Time Exceeded
-            println!("ICMPv6 Time Exceeded from {} (code: {})", ip_header.source, icmp_code);
-        }
-        135 => {
-            // Neighbor Solicitation
-            println!("ICMPv6 Neighbor Solicitation from {}", ip_header.source);
-        }
-        136 => {
-            // Neighbor Advertisement
-            println!("ICMPv6 Neighbor Advertisement from {}", ip_header.source);
-        }
-        _ => {
-            println!("Unknown ICMPv6 type: {} from {}", icmp_type, ip_header.source);
-        }
-    }
-
-    Ok(())
-}
 
 impl From<u8> for Protocol {
     fn from(value: u8) -> Self {

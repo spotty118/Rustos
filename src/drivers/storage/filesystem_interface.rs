@@ -4,7 +4,7 @@
 //! Supports block-level operations, partition management, and filesystem detection.
 
 use super::{StorageDriver, StorageError, StorageDeviceInfo};
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;

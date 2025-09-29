@@ -3,8 +3,8 @@
 //! This module provides integration with the Intel i915 opensource driver
 //! for Intel integrated graphics processors.
 
-use alloc::vec::Vec;
-use alloc::string::String;
+use alloc::vec;
+use alloc::string::ToString;
 
 /// Intel i915 driver context for Intel GPUs
 #[derive(Debug)]

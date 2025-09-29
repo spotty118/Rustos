@@ -213,16 +213,22 @@ impl Desktop {
     }
 }
 
-// Global desktop state (simplified for no_std)
-static mut DESKTOP_INITIALIZED: bool = false;
-static mut DESKTOP_STATUS: DesktopStatus = DesktopStatus::Uninitialized;
+use spin::Mutex;
+use lazy_static::lazy_static;
+
+// Global desktop state (production)
+lazy_static! {
+    static ref GLOBAL_DESKTOP: Mutex<Option<Desktop>> = Mutex::new(None);
+}
 
 /// Initialize the desktop environment
 pub fn init_default_desktop() -> Result<(), &'static str> {
-    unsafe {
-        DESKTOP_INITIALIZED = true;
-        DESKTOP_STATUS = DesktopStatus::Running;
-    }
+    let config = DesktopConfig::default();
+    let mut desktop = Desktop::new(config);
+    desktop.init()?;
+    
+    let mut global = GLOBAL_DESKTOP.lock();
+    *global = Some(desktop);
     Ok(())
 }
 
@@ -233,71 +239,130 @@ pub fn setup_full_desktop() -> Result<(), &'static str> {
 
 /// Update desktop
 pub fn update_desktop() {
-    // Simplified desktop update
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.update();
+    }
 }
 
 /// Get desktop status
 pub fn get_desktop_status() -> DesktopStatus {
-    unsafe { DESKTOP_STATUS }
+    let global = GLOBAL_DESKTOP.lock();
+    global.as_ref().map_or(DesktopStatus::Uninitialized, |d| d.status())
 }
 
 /// Create a window using the global window manager
 pub fn create_window(
-    _title: &'static str,
-    _x: usize,
-    _y: usize,
-    _width: usize,
-    _height: usize,
+    title: &'static str,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
 ) -> WindowId {
-    // Simplified window creation
-    WindowId(1)
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        if let Some(ref mut wm) = desktop.window_manager_mut() {
+            return wm.create_window(title, x, y, width, height);
+        }
+    }
+    WindowId(0) // Failed
 }
 
 /// Close a window
-pub fn close_window(_window_id: WindowId) -> bool {
-    // Simplified window closing
-    true
+pub fn close_window(window_id: WindowId) -> bool {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        if let Some(ref mut wm) = desktop.window_manager_mut() {
+            wm.close_window(window_id);
+            return true;
+        }
+    }
+    false
 }
 
 /// Focus a window
-pub fn focus_window(_window_id: WindowId) -> bool {
-    // Simplified window focusing
-    true
+pub fn focus_window(window_id: WindowId) -> bool {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        if let Some(ref mut wm) = desktop.window_manager_mut() {
+            wm.focus_window(window_id);
+            return true;
+        }
+    }
+    false
 }
 
 /// Handle mouse move
-pub fn handle_mouse_move(_x: usize, _y: usize) {
-    // Simplified mouse handling
+pub fn handle_mouse_move(x: usize, y: usize) {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.add_event(DesktopEvent::MouseMove { x, y });
+    }
 }
 
 /// Handle mouse down
-pub fn handle_mouse_down(_x: usize, _y: usize, _button: MouseButton) {
-    // Simplified mouse handling
+pub fn handle_mouse_down(x: usize, y: usize, button: MouseButton) {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.add_event(DesktopEvent::MouseDown { x, y, button });
+    }
 }
 
 /// Handle mouse up
-pub fn handle_mouse_up(_x: usize, _y: usize, _button: MouseButton) {
-    // Simplified mouse handling
+pub fn handle_mouse_up(x: usize, y: usize, button: MouseButton) {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.add_event(DesktopEvent::MouseUp { x, y, button });
+    }
 }
 
 /// Handle key down
-pub fn handle_key_down(_key: u8) {
-    // Simplified key handling
+pub fn handle_key_down(key: u8) {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.add_event(DesktopEvent::KeyDown { key });
+    }
+}
+
+/// Process all pending desktop events
+pub fn process_desktop_events() {
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        desktop.process_events();
+    }
 }
 
 /// Render desktop
 pub fn render_desktop() {
-    // Simplified desktop rendering
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        if let Some(ref mut wm) = desktop.window_manager_mut() {
+            if wm.needs_redraw() {
+                wm.render();
+            }
+        }
+    }
 }
 
 /// Check if desktop needs redraw
 pub fn desktop_needs_redraw() -> bool {
+    let global = GLOBAL_DESKTOP.lock();
+    if let Some(ref desktop) = *global {
+        if let Some(ref wm) = desktop.window_manager() {
+            return wm.needs_redraw();
+        }
+    }
     false
 }
 
 /// Invalidate desktop for redraw
 pub fn invalidate_desktop() {
-    // Simplified invalidation
+    let mut global = GLOBAL_DESKTOP.lock();
+    if let Some(ref mut desktop) = *global {
+        if let Some(ref mut wm) = desktop.window_manager_mut() {
+            wm.force_redraw();
+        }
+    }
 }
 
 /// Get window manager

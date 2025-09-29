@@ -286,16 +286,5 @@ pub fn get_device_count() -> usize {
 
 /// Print database statistics
 pub fn print_database_stats() {
-    crate::println!("PCI Database Statistics:");
-    crate::println!("  Known vendors: {}", get_vendor_count());
-    crate::println!("  Known devices: {}", get_device_count());
-
-    // Count devices per major vendor
-    let intel_count = get_vendor_devices(0x8086).len();
-    let amd_count = get_vendor_devices(0x1022).len() + get_vendor_devices(0x1002).len();
-    let nvidia_count = get_vendor_devices(0x10DE).len();
-
-    crate::println!("  Intel devices: {}", intel_count);
-    crate::println!("  AMD devices: {}", amd_count);
-    crate::println!("  NVIDIA devices: {}", nvidia_count);
+    // Statistics available via get_vendor_count() and get_device_count() functions
 }

@@ -4,8 +4,10 @@
 //! and OpenGL/Vulkan implementations on RustOS.
 
 use alloc::vec::Vec;
-use alloc::string::String;
+use alloc::vec;
+use alloc::string::{String, ToString};
 use alloc::collections::BTreeMap;
+use alloc::format;
 
 /// Mesa driver types
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -4,7 +4,7 @@
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
 use alloc::vec::Vec;
-use crate::println;
+use alloc::string::ToString;
 
 /// Ethernet frame header size
 pub const ETHERNET_HEADER_SIZE: usize = 14;
@@ -112,8 +112,7 @@ pub fn process_frame(network_stack: &NetworkStack, mut packet: PacketBuffer) -> 
     // Parse Ethernet header
     let header = EthernetHeader::parse(&mut packet)?;
     
-    println!("Received Ethernet frame: {} -> {} (type: {:?})",
-        header.source, header.destination, header.ether_type);
+    // Production: Ethernet frame processed silently
 
     // Check if frame is for us (broadcast, multicast, or our MAC)
     if !is_frame_for_us(&header.destination) {
@@ -133,7 +132,7 @@ pub fn process_frame(network_stack: &NetworkStack, mut packet: PacketBuffer) -> 
         }
         EtherType::VLAN => {
             // TODO: Handle VLAN tagged frames
-            println!("VLAN frames not yet supported");
+            // Production: VLAN not supported
             Ok(())
         }
     }
@@ -201,32 +200,38 @@ fn process_arp_packet(network_stack: &NetworkStack, mut packet: PacketBuffer) ->
     let target_hw_bytes = packet.read(6).ok_or(NetworkError::InvalidPacket)?;
     let mut target_hw = [0u8; 6];
     target_hw.copy_from_slice(target_hw_bytes);
-    let target_hw_addr = NetworkAddress::Mac(target_hw);
+    let _target_hw_addr = NetworkAddress::Mac(target_hw);
 
     let target_proto_bytes = packet.read(4).ok_or(NetworkError::InvalidPacket)?;
     let mut target_proto = [0u8; 4];
     target_proto.copy_from_slice(target_proto_bytes);
-    let target_proto_addr = NetworkAddress::IPv4(target_proto);
+    let _target_proto_addr = NetworkAddress::IPv4(target_proto);
 
-    println!("ARP packet: op={}, sender={}({}), target={}({})",
-        operation, sender_proto_addr, sender_hw_addr, target_proto_addr, target_hw_addr);
+    // Production: ARP packet processed silently
 
-    // Update ARP table with sender information
-    network_stack.update_arp(sender_proto_addr, sender_hw_addr);
+    // Update ARP table with sender information using enhanced ARP module
+    super::arp::update_arp_entry(sender_proto_addr, sender_hw_addr, "eth0".to_string())?;
 
     match operation {
         1 => {
             // ARP Request
-            println!("ARP Request: Who has {}?", target_proto_addr);
-            // TODO: Check if target IP is ours and send ARP reply
+            super::arp::process_arp_request(
+                sender_proto_addr,
+                sender_hw_addr,
+                _target_proto_addr,
+                "eth0".to_string()
+            )?;
         }
         2 => {
             // ARP Reply
-            println!("ARP Reply: {} is at {}", sender_proto_addr, sender_hw_addr);
-            // ARP table already updated above
+            super::arp::process_arp_reply(
+                sender_proto_addr,
+                sender_hw_addr,
+                "eth0".to_string()
+            )?;
         }
         _ => {
-            println!("Unknown ARP operation: {}", operation);
+            // Unknown ARP operation - ignore
         }
     }
 

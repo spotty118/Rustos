@@ -5,7 +5,6 @@
 
 use crate::pci::{PciClass, PciDevice, PciBusScanner, get_pci_scanner};
 use crate::pci::config::PciConfigManager;
-use crate::pci::database;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 use core::fmt;
@@ -437,82 +436,24 @@ impl HardwareDetector {
         capabilities
     }
 
-    /// Print comprehensive hardware detection report
+    /// Production hardware detection report - only critical issues
     pub fn print_detection_report(&self, results: &HardwareDetectionResults) {
-        crate::println!("\n=== PCI Hardware Detection Report ===");
-        crate::println!("Total devices found: {}", results.total_devices);
-
-        // Print devices by class
-        crate::println!("\nDevices by Class:");
-        for (class, devices) in &results.devices_by_class {
-            crate::println!("  {}: {} devices", class, devices.len());
-            for device in devices {
-                let vendor_name = database::get_vendor_name(device.vendor_id);
-                let device_name = database::get_device_name(device.vendor_id, device.device_id);
-                let category = self.get_device_category(device);
-                let driver = self.get_recommended_driver(device);
-
-                crate::println!("    {} - {} {} ({})",
-                               device.location(), vendor_name, device_name, category);
-                crate::println!("      Recommended driver: {}", driver);
-
-                let power_caps = self.get_power_capabilities(device);
-                if !power_caps.is_empty() {
-                    crate::println!("      Capabilities: {}", power_caps.join(", "));
-                }
-            }
-        }
-
-        // Print critical devices
-        if !results.critical_devices.is_empty() {
-            crate::println!("\nCritical System Devices:");
-            for device in &results.critical_devices {
-                crate::println!("  {} - {} ({})",
-                               device.location(),
-                               database::get_vendor_name(device.vendor_id),
-                               database::get_device_name(device.vendor_id, device.device_id));
-            }
-        }
-
-        // Print devices with advanced capabilities
-        if !results.msi_capable.is_empty() {
-            crate::println!("\nMSI-Capable Devices: {}", results.msi_capable.len());
-        }
-
-        if !results.msi_x_capable.is_empty() {
-            crate::println!("MSI-X Capable Devices: {}", results.msi_x_capable.len());
-        }
-
-        if !results.hot_plug_capable.is_empty() {
-            crate::println!("Hot-Plug Capable Devices: {}", results.hot_plug_capable.len());
-        }
-
-        if !results.power_managed.is_empty() {
-            crate::println!("Power Management Capable: {}", results.power_managed.len());
-        }
-
-        // Print resource conflicts
+        // Production: only report critical information and errors
+        
+        // Report only critical resource conflicts
         if !results.resource_conflicts.is_empty() {
-            crate::println!("\nResource Conflicts Detected:");
             for conflict in &results.resource_conflicts {
-                crate::println!("  {} Conflict - {} severity", conflict.conflict_type, conflict.severity);
-                crate::println!("    Device 1: {}", conflict.device1.location());
-                crate::println!("    Device 2: {}", conflict.device2.location());
-                match conflict.conflict_type {
-                    ConflictType::InterruptConflict => {
-                        crate::println!("    IRQ: {}", conflict.address_range.0);
-                    }
-                    _ => {
-                        crate::println!("    Range: 0x{:x}-0x{:x}",
-                                       conflict.address_range.0, conflict.address_range.1);
-                    }
+                if conflict.severity == ConflictSeverity::Critical {
+                    crate::println!("Critical PCI conflict: {} and {}",
+                                   conflict.device1.location(), conflict.device2.location());
                 }
             }
-        } else {
-            crate::println!("\nNo resource conflicts detected.");
         }
 
-        crate::println!("\n=== End Hardware Detection Report ===\n");
+        // Only report if no devices found (system problem)
+        if results.total_devices == 0 {
+            crate::println!("Warning: No PCI devices detected");
+        }
     }
 }
 

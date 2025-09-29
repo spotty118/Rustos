@@ -4,7 +4,7 @@
 //! Supports PCIe-based NVMe controllers with queue-based command processing.
 
 use super::{StorageDriver, StorageDeviceType, StorageDeviceState, StorageCapabilities, StorageError, StorageStats};
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::mem;
 use core::ptr;

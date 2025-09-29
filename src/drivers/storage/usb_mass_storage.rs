@@ -4,7 +4,7 @@
 //! USB flash drives, external hard drives, and USB card readers.
 
 use super::{StorageDriver, StorageDeviceType, StorageDeviceState, StorageCapabilities, StorageError, StorageStats};
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 /// USB Mass Storage Class codes

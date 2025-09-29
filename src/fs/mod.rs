@@ -12,7 +12,6 @@ pub mod ramfs;
 pub mod devfs;
 
 use alloc::{string::{String, ToString}, vec::Vec, collections::BTreeMap, format, boxed::Box};
-use crate::println;
 use core::fmt;
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
@@ -502,8 +501,6 @@ impl VfsManager {
 
         // Sort mount points by path length (longest first) for proper resolution
         mount_points.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
-
-        println!("Mounted filesystem at {}", path);
         Ok(())
     }
 
@@ -513,7 +510,6 @@ impl VfsManager {
         
         if let Some(pos) = mount_points.iter().position(|mp| mp.path == path) {
             mount_points.remove(pos);
-            println!("Unmounted filesystem at {}", path);
             Ok(())
         } else {
             Err(FsError::NotFound)
@@ -818,7 +814,6 @@ pub fn init() -> FsResult<()> {
     VFS.mkdir("/usr", FilePermissions::from_octal(0o755))?;
     VFS.mkdir("/var", FilePermissions::from_octal(0o755))?;
 
-    println!("✓ VFS initialized with root ramfs and devfs");
     Ok(())
 }
 

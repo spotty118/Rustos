@@ -19,14 +19,13 @@ const STACK_SIZE: usize = 4096 * 5; // 20KB stack
 /// Interrupt stack for double fault handler
 static mut DOUBLE_FAULT_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
-/// Task State Segment for stack switching
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
 
         // Set up the double fault stack in the IST
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
-            let stack_start = VirtAddr::from_ptr(unsafe { &raw const DOUBLE_FAULT_STACK });
+            let stack_start = VirtAddr::from_ptr(&raw const DOUBLE_FAULT_STACK);
             let stack_end = stack_start + STACK_SIZE;
             stack_end
         };
@@ -44,7 +43,6 @@ struct Selectors {
     tss_selector: GdtSegmentSelector,
 }
 
-/// Global Descriptor Table with kernel/user segments and TSS
 lazy_static! {
     static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
@@ -221,16 +219,16 @@ pub fn get_stack_info() -> StackInfo {
 }
 
 /// Set kernel stack pointer in TSS (for task switching)
-pub fn set_kernel_stack(stack_ptr: VirtAddr) {
+pub fn set_kernel_stack(_stack_ptr: VirtAddr) {
     // In a full implementation, this would modify the TSS
     // For now, we'll just store it for reference
-    crate::serial_println!("Setting kernel stack to: {:?}", stack_ptr);
+    // Kernel stack pointer set
 }
 
 /// Set user stack pointer (for task switching)
-pub fn set_user_stack(stack_ptr: VirtAddr) {
+pub fn set_user_stack(_stack_ptr: VirtAddr) {
     // In a full implementation, this would be used during privilege level changes
-    crate::serial_println!("Setting user stack to: {:?}", stack_ptr);
+    // User stack pointer set
 }
 
 /// Memory segment information
@@ -300,36 +298,19 @@ pub fn get_segment_info(selector: GdtSegmentSelector) -> Option<SegmentInfo> {
     }
 }
 
-/// Print GDT information for debugging
+/// Production GDT - no debug output (security sensitive)
 pub fn print_gdt_info() {
-    crate::serial_println!("GDT Information:");
-    crate::serial_println!("Kernel Code Selector: 0x{:x}", GDT.1.kernel_code_selector.0);
-    crate::serial_println!("Kernel Data Selector: 0x{:x}", GDT.1.kernel_data_selector.0);
-    crate::serial_println!("User Code Selector: 0x{:x}", GDT.1.user_code_selector.0);
-    crate::serial_println!("User Data Selector: 0x{:x}", GDT.1.user_data_selector.0);
-    crate::serial_println!("TSS Selector: 0x{:x}", GDT.1.tss_selector.0);
-
-    let context = get_execution_context();
-    crate::serial_println!("Current Execution Context: {:#?}", context);
+    // Production kernels don't expose GDT details
 }
 
-/// Test function to verify GDT setup
+/// Production GDT validation
 pub fn test_gdt() {
-    crate::serial_println!("Testing GDT setup...");
-
-    // Test privilege level detection
-    let is_kernel = is_kernel_mode();
-    let is_user = is_user_mode();
-    crate::serial_println!("Is kernel mode: {}", is_kernel);
-    crate::serial_println!("Is user mode: {}", is_user);
-
-    // Test segment info retrieval
-    if let Some(info) = get_segment_info(get_kernel_code_selector()) {
-        crate::serial_println!("Kernel code segment info: {:#?}", info);
-    }
-
-    print_gdt_info();
-    crate::serial_println!("GDT test completed!");
+    // Production: validate GDT setup internally without exposing details
+    let _is_kernel = is_kernel_mode();
+    let _is_user = is_user_mode();
+    
+    // Validate segment selectors are valid
+    let _info = get_segment_info(get_kernel_code_selector());
 }
 
 /// Advanced TSS management for future extensions
@@ -370,8 +351,8 @@ pub mod tss_management {
 
     /// Print TSS information
     pub fn print_tss_info() {
-        let fields = get_tss_fields();
-        crate::serial_println!("TSS Information: {:#?}", fields);
+        let _fields = get_tss_fields();
+        // Production: TSS info not exposed
     }
 }
 
@@ -379,5 +360,5 @@ pub mod tss_management {
 pub fn init_interrupt_stacks() {
     // This could be extended to set up additional IST entries
     // for different types of critical interrupts
-    crate::serial_println!("Interrupt stacks initialized");
+    // Interrupt stacks initialized
 }

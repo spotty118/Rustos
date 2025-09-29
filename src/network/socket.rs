@@ -3,7 +3,7 @@
 //! This module provides high-level socket abstractions for the RustOS network stack,
 //! supporting TCP and UDP sockets with BSD-style socket API.
 
-use crate::{format, BTreeMap, String, Vec};
+use alloc::{collections::BTreeMap, boxed::Box, string::String, vec::Vec, format};
 use core::fmt;
 use spin::RwLock;
 

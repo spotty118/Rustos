@@ -348,8 +348,7 @@ run_gui_demo() {
             rustos:latest bash -c "GUI_MODE=1 ./run_qemu.sh"
     fi
 
-    print_success "GUI demo completed!"</end_text>
-
+    print_success "GUI demo completed!"
 }
 
 # Set up X11 forwarding

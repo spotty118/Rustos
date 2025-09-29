@@ -444,3 +444,17 @@ impl Scheduler {
         }
     }
 }
+
+/// Process scheduling statistics
+#[derive(Debug, Clone)]
+pub struct ProcessSchedulingStats {
+    pub pid: Pid,
+    pub priority: Priority,
+    pub nice: i8,
+    pub weight: u32,
+    pub vruntime: u64,
+    pub total_cpu_time: u64,
+    pub schedule_count: u64,
+    pub blocked: bool,
+    pub cpu_affinity: u64,
+}

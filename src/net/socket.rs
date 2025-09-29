@@ -3,7 +3,6 @@
 //! This module provides the socket abstraction layer for network communication,
 //! supporting TCP, UDP, and raw sockets with a POSIX-like interface.
 
-use crate::println;
 use super::{NetworkAddress, Protocol, NetworkError, NetworkResult};
 use alloc::collections::VecDeque;
 use core::fmt;
@@ -172,12 +171,12 @@ impl Socket {
         // TODO: Implement proper address checking
         
         self.local_address = Some(address);
-        println!("Socket {} bound to {}", self.id, address);
+        // Production: socket bound silently
         Ok(())
     }
 
     /// Listen for incoming connections (TCP only)
-    pub fn listen(&mut self, backlog: u32) -> NetworkResult<()> {
+    pub fn listen(&mut self, _backlog: u32) -> NetworkResult<()> {
         if self.socket_type != SocketType::Stream {
             return Err(NetworkError::NotSupported);
         }
@@ -189,7 +188,7 @@ impl Socket {
         self.state = SocketState::Listening;
         self.pending_connections.clear();
         
-        println!("Socket {} listening with backlog {}", self.id, backlog);
+        // Production: socket listening
         Ok(())
     }
 
@@ -206,13 +205,13 @@ impl Socket {
         match self.socket_type {
             SocketType::Stream => {
                 // TCP connection
-                println!("Socket {} connecting to {} (TCP)", self.id, address);
+                // Production: TCP connection established
                 // Simulate successful connection
                 self.state = SocketState::Connected;
             }
             SocketType::Datagram => {
                 // UDP "connection" (just sets default destination)
-                println!("Socket {} connected to {} (UDP)", self.id, address);
+                // Production: UDP association established
                 self.state = SocketState::Connected;
             }
             SocketType::Raw => {
@@ -255,7 +254,7 @@ impl Socket {
         self.stats.bytes_sent += bytes_sent as u64;
         self.stats.packets_sent += 1;
 
-        println!("Socket {} sent {} bytes", self.id, bytes_sent);
+        // Production: data sent successfully
         Ok(bytes_sent)
     }
 
@@ -279,12 +278,12 @@ impl Socket {
         self.stats.bytes_received += bytes_to_read as u64;
         self.stats.packets_received += 1;
 
-        println!("Socket {} received {} bytes", self.id, bytes_to_read);
+        // Production: data received successfully
         Ok(bytes_to_read)
     }
 
     /// Send data to specific address (UDP only)
-    pub fn send_to(&mut self, data: &[u8], address: SocketAddress) -> NetworkResult<usize> {
+    pub fn send_to(&mut self, data: &[u8], _address: SocketAddress) -> NetworkResult<usize> {
         if self.socket_type != SocketType::Datagram {
             return Err(NetworkError::NotSupported);
         }
@@ -294,7 +293,7 @@ impl Socket {
         self.stats.bytes_sent += bytes_sent as u64;
         self.stats.packets_sent += 1;
 
-        println!("Socket {} sent {} bytes to {}", self.id, bytes_sent, address);
+        // Production: datagram sent successfully
         Ok(bytes_sent)
     }
 
@@ -322,7 +321,7 @@ impl Socket {
         self.stats.bytes_received += bytes_received as u64;
         self.stats.packets_received += 1;
 
-        println!("Socket {} received {} bytes from {}", self.id, bytes_received, source);
+        // Production: datagram received successfully
         Ok((bytes_received, source))
     }
 
@@ -344,7 +343,7 @@ impl Socket {
         self.send_buffer.clear();
         self.pending_connections.clear();
 
-        println!("Socket {} closed", self.id);
+        // Production: socket closed successfully
         Ok(())
     }
 

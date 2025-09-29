@@ -3,7 +3,7 @@
 //! Complete network stack implementation for RustOS kernel with support for
 //! Ethernet, IPv4/IPv6, TCP/UDP, and socket interfaces.
 
-use crate::{BTreeMap, Box, String, Vec};
+use alloc::{collections::BTreeMap, boxed::Box, string::String, vec::Vec};
 use core::fmt;
 use spin::{Mutex, RwLock};
 

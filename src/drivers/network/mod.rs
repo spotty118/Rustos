@@ -9,7 +9,7 @@ pub mod realtek;
 pub mod broadcom;
 pub mod atheros_wifi;
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;

@@ -4,7 +4,7 @@
 //! Supports extensive device IDs from Intel, AMD, VIA, and other manufacturers.
 
 use super::{StorageDriver, StorageDeviceType, StorageDeviceState, StorageCapabilities, StorageError, StorageStats};
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::mem;
 use core::ptr;

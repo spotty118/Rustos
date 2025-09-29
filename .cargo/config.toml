@@ -1,20 +1,23 @@
 [unstable]
-build-std-features = ["compiler-builtins-mem"]
 build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
 
 [build]
-# Use custom target for builds, but not for tests
 target = "x86_64-rustos.json"
 
-# Test configuration to avoid conflicts
 [target.x86_64-rustos]
 runner = "bootimage runner"
 
+[env]
+CARGO_TARGET_X86_64_RUSTOS_RUNNER = "bootimage runner"
+# Environment variables for cross-compilation
+RUST_BACKTRACE = "1"
+
 # Workaround for duplicate lang item issues in tests
 [target.'cfg(test)']
-rustflags = ["--cfg", "no_global_allocator"]
+rustflags = ["-C", "prefer-dynamic"]
 
-# Override target for tests to use host target
+# Override target for tests to use host target - avoid build-std for tests
 [profile.test]
 panic = "unwind"
 
@@ -23,7 +26,3 @@ panic = "unwind"
 build-x86 = "build --target x86_64-rustos.json"
 build-arm = "build --lib --target aarch64-apple-rustos.json"
 build-lib = "build --lib"
-
-[env]
-# Environment variables for cross-compilation
-RUST_BACKTRACE = "1"

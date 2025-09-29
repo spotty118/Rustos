@@ -9,7 +9,6 @@ use alloc::{vec::Vec, collections::BTreeMap, format};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
-use crate::println;
 
 /// PCI configuration space registers
 pub const PCI_VENDOR_ID: u8 = 0x00;
@@ -239,7 +238,7 @@ impl PciBus {
         // Scan for devices
         self.scan_bus()?;
         
-        println!("✓ PCI subsystem initialized");
+        // Production: PCI subsystem initialized
         Ok(())
     }
 
@@ -248,7 +247,7 @@ impl PciBus {
         // For now, use I/O port method
         // TODO: Detect MMCONFIG from ACPI MCFG table
         *self.config_method.lock() = ConfigMethod::IoPort;
-        println!("PCI: Using I/O port configuration method");
+        // Production: I/O port configuration method selected
         Ok(())
     }
 
@@ -406,7 +405,7 @@ impl PciBus {
         let mut device_count = 0;
         let mut devices = self.devices.write();
 
-        println!("PCI: Scanning bus for devices...");
+        // Production: PCI bus scan in progress
 
         // Scan all possible bus/device/function combinations
         for bus in 0..=255 {
@@ -415,17 +414,14 @@ impl PciBus {
                     let address = PciAddress::new(bus, device, function);
                     
                     if let Ok(pci_device) = self.read_device_config(address) {
-                        println!("PCI: Found device at {} - {}:{:04x}:{:04x} ({})",
-                            address,
-                            pci_device.get_vendor_name(),
-                            pci_device.vendor_id,
-                            pci_device.device_id,
-                            pci_device.get_class_name());
+                        // Production: PCI device enumerated silently
+                        let _device_id = pci_device.device_id;
+                        let _class_name = pci_device.get_class_name();
 
                         // Add to hot-plug system
                         let device_info = pci_device.to_device_info();
-                        if let Err(e) = add_device(device_info) {
-                            println!("Failed to add PCI device to hot-plug: {}", e);
+                        if let Err(_e) = add_device(device_info) {
+                            // Production: hot-plug registration issue
                         }
 
                         devices.insert(address, pci_device);
@@ -445,7 +441,7 @@ impl PciBus {
         }
 
         *self.scan_complete.write() = true;
-        println!("PCI: Scan complete, found {} devices", device_count);
+        // Production: PCI scan completed
         Ok(device_count)
     }
 

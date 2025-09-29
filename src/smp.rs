@@ -1,439 +1,244 @@
-//! SMP (Symmetric Multi-Processing) Support for RustOS
+//! Production SMP (Symmetric MultiProcessing) support for RustOS
 //!
-//! This module provides multi-processor support including CPU discovery,
-//! IPI (Inter-Processor Interrupt) handling, and load balancing.
+//! Real multiprocessor support using APIC and x86_64 features
 
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use alloc::{vec::Vec, collections::BTreeMap};
-use spin::{Mutex, RwLock};
-use lazy_static::lazy_static;
-use crate::println;
+use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use x86_64::VirtAddr;
+use spin::Mutex;
 
 /// Maximum number of CPUs supported
 pub const MAX_CPUS: usize = 256;
 
-/// CPU states
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CpuState {
-    /// CPU is offline/not detected
-    Offline,
-    /// CPU is online and running
-    Online,
-    /// CPU is in the process of coming online
-    Starting,
-    /// CPU is in the process of going offline
-    Stopping,
-    /// CPU has encountered an error
-    Error,
-}
-
-/// CPU information structure
-#[derive(Debug, Clone)]
-pub struct CpuInfo {
+/// Per-CPU data structure
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CpuData {
     pub cpu_id: u32,
     pub apic_id: u32,
-    pub state: CpuState,
-    pub frequency: u32, // MHz
-    pub family: u8,
-    pub model: u8,
-    pub stepping: u8,
-    pub features: u64,
-    pub cache_size: u32, // KB
-    pub core_id: u32,
-    pub package_id: u32,
+    pub online: bool,
+    pub idle_time: u64,
+    pub kernel_stack: VirtAddr,
+    pub tss_selector: u16,
 }
 
-impl Default for CpuInfo {
-    fn default() -> Self {
+impl CpuData {
+    const fn new() -> Self {
         Self {
             cpu_id: 0,
             apic_id: 0,
-            state: CpuState::Offline,
-            frequency: 1000, // 1 GHz default
-            family: 6,
-            model: 0,
-            stepping: 0,
-            features: 0,
-            cache_size: 256, // 256 KB default
-            core_id: 0,
-            package_id: 0,
+            online: false,
+            idle_time: 0,
+            kernel_stack: VirtAddr::zero(),
+            tss_selector: 0,
         }
     }
 }
 
-/// IPI (Inter-Processor Interrupt) types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IpiType {
-    /// Reschedule interrupt
-    Reschedule,
-    /// Function call interrupt
-    FunctionCall,
-    /// TLB invalidation
-    TlbInvalidate,
-    /// Timer interrupt
-    Timer,
-    /// Halt CPU
-    Halt,
-    /// Generic interrupt
-    Generic,
+/// Global CPU data array
+static CPU_DATA: Mutex<[CpuData; MAX_CPUS]> = Mutex::new([CpuData::new(); MAX_CPUS]);
+/// Number of detected CPUs
+static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Number of online CPUs
+static ONLINE_CPUS: AtomicU32 = AtomicU32::new(1); // BSP is always online
+/// SMP initialized flag
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Local APIC base address
+static LOCAL_APIC_BASE: AtomicU64 = AtomicU64::new(0);
+
+use core::sync::atomic::AtomicU64;
+
+/// APIC register offsets
+mod apic_regs {
+    pub const APIC_ID: u32 = 0x20;
+    pub const APIC_VERSION: u32 = 0x30;
+    pub const APIC_TPR: u32 = 0x80;
+    pub const APIC_EOI: u32 = 0xB0;
+    pub const APIC_SPURIOUS: u32 = 0xF0;
+    pub const APIC_ICR_LOW: u32 = 0x300;
+    pub const APIC_ICR_HIGH: u32 = 0x310;
+    pub const APIC_TIMER_LVT: u32 = 0x320;
+    pub const APIC_TIMER_INITIAL: u32 = 0x380;
+    pub const APIC_TIMER_CURRENT: u32 = 0x390;
+    pub const APIC_TIMER_DIVIDE: u32 = 0x3E0;
 }
 
-/// SMP statistics
-#[derive(Debug, Clone)]
-pub struct SmpStatistics {
-    pub total_cpus: usize,
-    pub online_cpus: usize,
-    pub offline_cpus: usize,
-    pub ipi_sent: u64,
-    pub ipi_received: u64,
-    pub context_switches: u64,
-    pub load_balance_count: u64,
-}
-
-lazy_static! {
-    /// CPU information array
-    static ref CPU_INFO: RwLock<BTreeMap<u32, CpuInfo>> = RwLock::new(BTreeMap::new());
-    
-    /// SMP management state
-    static ref SMP_STATE: Mutex<SmpState> = Mutex::new(SmpState::new());
-}
-
-/// Internal SMP state
-struct SmpState {
-    initialized: bool,
-    bootstrap_cpu_id: u32,
-    ipi_count: u64,
-    load_balance_enabled: bool,
-}
-
-impl SmpState {
-    fn new() -> Self {
-        Self {
-            initialized: false,
-            bootstrap_cpu_id: 0,
-            ipi_count: 0,
-            load_balance_enabled: true,
-        }
-    }
-}
-
-/// Current CPU ID (thread-local equivalent for kernel)
-static CURRENT_CPU_ID: AtomicU32 = AtomicU32::new(0);
-
-/// Total CPU count
-static CPU_COUNT: AtomicUsize = AtomicUsize::new(1);
-
-/// Online CPU count
-static ONLINE_CPU_COUNT: AtomicUsize = AtomicUsize::new(1);
-
-/// Initialize SMP system
+/// Initialize SMP subsystem
 pub fn init() -> Result<(), &'static str> {
-    let mut state = SMP_STATE.lock();
-    
-    if state.initialized {
+    // Check if already initialized
+    if INITIALIZED.load(Ordering::Acquire) {
         return Ok(());
     }
-
-    // Detect CPUs using ACPI MADT or MP tables
-    detect_cpus()?;
     
-    // Initialize bootstrap CPU
-    let bootstrap_cpu = CpuInfo {
+    // Get Local APIC base from MSR
+    let apic_base = unsafe { read_msr(0x1B) };
+    if apic_base & (1 << 11) == 0 {
+        return Err("APIC not enabled");
+    }
+    
+    let apic_phys = apic_base & 0xFFFF_F000;
+    LOCAL_APIC_BASE.store(apic_phys, Ordering::Release);
+    
+    // Initialize BSP (Bootstrap Processor) data
+    let mut cpu_data = CPU_DATA.lock();
+    cpu_data[0] = CpuData {
         cpu_id: 0,
-        apic_id: 0,
-        state: CpuState::Online,
-        ..Default::default()
+        apic_id: get_apic_id(),
+        online: true,
+        idle_time: 0,
+        kernel_stack: VirtAddr::zero(), // Will be set by memory manager
+        tss_selector: 0, // Will be set by GDT
     };
     
-    CPU_INFO.write().insert(0, bootstrap_cpu);
-    
-    state.initialized = true;
-    state.bootstrap_cpu_id = 0;
-    
-    println!("SMP: Initialized with {} CPU(s)", get_cpu_count());
+    CPU_COUNT.store(1, Ordering::Release);
+    ONLINE_CPUS.store(1, Ordering::Release);
+    INITIALIZED.store(true, Ordering::Release);
     
     Ok(())
 }
 
-/// Detect available CPUs
-fn detect_cpus() -> Result<(), &'static str> {
-    // For now, assume single CPU system
-    // In a real implementation, this would parse ACPI MADT
-    CPU_COUNT.store(1, Ordering::SeqCst);
-    ONLINE_CPU_COUNT.store(1, Ordering::SeqCst);
-    
-    Ok(())
+/// Get current CPU's APIC ID
+pub fn get_apic_id() -> u32 {
+    if let Some(base) = get_apic_base() {
+        unsafe { read_apic(base, apic_regs::APIC_ID) >> 24 }
+    } else {
+        // Fallback to CPUID
+        unsafe {
+            let result = core::arch::x86_64::__cpuid(1);
+            (result.ebx >> 24) as u32
+        }
+    }
 }
 
 /// Get current CPU ID
 pub fn current_cpu() -> u32 {
-    CURRENT_CPU_ID.load(Ordering::SeqCst)
-}
-
-/// Get total CPU count
-pub fn get_cpu_count() -> usize {
-    CPU_COUNT.load(Ordering::SeqCst)
-}
-
-/// Get online CPU count
-pub fn get_online_cpu_count() -> usize {
-    ONLINE_CPU_COUNT.load(Ordering::SeqCst)
-}
-
-/// Get CPU information
-pub fn get_cpu_info(cpu_id: u32) -> Option<CpuInfo> {
-    CPU_INFO.read().get(&cpu_id).cloned()
-}
-
-/// Get all CPU information
-pub fn get_all_cpu_info() -> Vec<CpuInfo> {
-    CPU_INFO.read().values().cloned().collect()
-}
-
-/// Send IPI to specific CPU
-pub fn send_ipi(target_cpu: u32, _ipi_type: IpiType, _data: u64) -> Result<(), &'static str> {
-    let cpu_info = CPU_INFO.read();
+    let apic_id = get_apic_id();
+    let cpu_data = CPU_DATA.lock();
     
-    if !cpu_info.contains_key(&target_cpu) {
-        return Err("Target CPU not found");
-    }
-    
-    let target_info = &cpu_info[&target_cpu];
-    if target_info.state != CpuState::Online {
-        return Err("Target CPU not online");
-    }
-    
-    // In a real implementation, this would use APIC to send IPI
-    // For now, just increment counters
-    let mut state = SMP_STATE.lock();
-    state.ipi_count += 1;
-    
-    Ok(())
-}
-
-/// Send IPI to all CPUs except current
-pub fn send_ipi_all_but_self(_ipi_type: IpiType, _data: u64) -> Result<(), &'static str> {
-    let current = current_cpu();
-    let cpu_info = CPU_INFO.read();
-    
-    for (&cpu_id, info) in cpu_info.iter() {
-        if cpu_id != current && info.state == CpuState::Online {
-            // Send IPI (simplified)
-            let mut state = SMP_STATE.lock();
-            state.ipi_count += 1;
+    for i in 0..CPU_COUNT.load(Ordering::Acquire) as usize {
+        if cpu_data[i].apic_id == apic_id {
+            return cpu_data[i].cpu_id;
         }
     }
     
-    Ok(())
+    // Default to 0 if not found (shouldn't happen)
+    0
 }
 
-/// Bring a CPU online
-pub fn bring_cpu_online(cpu_id: u32) -> Result<(), &'static str> {
-    let mut cpu_info = CPU_INFO.write();
-    
-    if let Some(info) = cpu_info.get_mut(&cpu_id) {
-        if info.state == CpuState::Offline {
-            info.state = CpuState::Starting;
-            
-            // Simulate CPU startup process
-            // In real implementation, this would involve INIT/SIPI sequence
-            
-            info.state = CpuState::Online;
-            ONLINE_CPU_COUNT.fetch_add(1, Ordering::SeqCst);
-            
-            println!("SMP: CPU {} brought online", cpu_id);
-            Ok(())
-        } else {
-            Err("CPU already online or in transition")
-        }
-    } else {
-        Err("CPU not found")
-    }
+/// Get number of CPUs
+pub fn cpu_count() -> u32 {
+    CPU_COUNT.load(Ordering::Acquire)
 }
 
-/// Take a CPU offline
-pub fn take_cpu_offline(cpu_id: u32) -> Result<(), &'static str> {
-    if cpu_id == 0 {
-        return Err("Cannot take bootstrap CPU offline");
-    }
-    
-    let mut cpu_info = CPU_INFO.write();
-    
-    if let Some(info) = cpu_info.get_mut(&cpu_id) {
-        if info.state == CpuState::Online {
-            info.state = CpuState::Stopping;
-            
-            // Send halt IPI
-            drop(cpu_info);
-            send_ipi(cpu_id, IpiType::Halt, 0)?;
-            
-            let mut cpu_info = CPU_INFO.write();
-            if let Some(info) = cpu_info.get_mut(&cpu_id) {
-                info.state = CpuState::Offline;
-                ONLINE_CPU_COUNT.fetch_sub(1, Ordering::SeqCst);
-            }
-            
-            println!("SMP: CPU {} taken offline", cpu_id);
-            Ok(())
-        } else {
-            Err("CPU not online")
-        }
-    } else {
-        Err("CPU not found")
-    }
-}
-
-/// Get SMP statistics
-pub fn get_smp_statistics() -> SmpStatistics {
-    let cpu_info = CPU_INFO.read();
-    let state = SMP_STATE.lock();
-    
-    let mut online_count = 0;
-    let mut offline_count = 0;
-    
-    for info in cpu_info.values() {
-        match info.state {
-            CpuState::Online => online_count += 1,
-            CpuState::Offline => offline_count += 1,
-            _ => {}
-        }
-    }
-    
-    SmpStatistics {
-        total_cpus: cpu_info.len(),
-        online_cpus: online_count,
-        offline_cpus: offline_count,
-        ipi_sent: state.ipi_count,
-        ipi_received: state.ipi_count, // Simplified
-        context_switches: 0, // Would be tracked by scheduler
-        load_balance_count: 0, // Would be tracked by load balancer
-    }
-}
-
-/// Set CPU affinity for current thread
-pub fn set_cpu_affinity(cpu_mask: u64) -> Result<(), &'static str> {
-    // In a real implementation, this would set the CPU affinity
-    // For now, just validate the mask
-    if cpu_mask == 0 {
-        return Err("Invalid CPU mask");
-    }
-    
-    let cpu_count = get_cpu_count();
-    if cpu_mask >= (1u64 << cpu_count) {
-        return Err("CPU mask exceeds available CPUs");
-    }
-    
-    Ok(())
-}
-
-/// Get current CPU affinity
-pub fn get_cpu_affinity() -> u64 {
-    // Return affinity for current CPU
-    1u64 << current_cpu()
-}
-
-/// Load balancing function
-pub fn balance_load() -> Result<(), &'static str> {
-    let state = SMP_STATE.lock();
-    
-    if !state.load_balance_enabled {
-        return Ok(());
-    }
-    
-    // Simplified load balancing
-    // In a real implementation, this would move tasks between CPUs
-    
-    Ok(())
-}
-
-/// Enable/disable load balancing
-pub fn set_load_balancing(enabled: bool) {
-    let mut state = SMP_STATE.lock();
-    state.load_balance_enabled = enabled;
+/// Get number of online CPUs
+pub fn online_cpus() -> u32 {
+    ONLINE_CPUS.load(Ordering::Acquire)
 }
 
 /// Check if SMP is initialized
 pub fn is_initialized() -> bool {
-    SMP_STATE.lock().initialized
+    INITIALIZED.load(Ordering::Acquire)
 }
 
-/// Get bootstrap CPU ID
-pub fn get_bootstrap_cpu() -> u32 {
-    SMP_STATE.lock().bootstrap_cpu_id
-}
-
-/// CPU hotplug notification
-pub fn notify_cpu_hotplug(cpu_id: u32, online: bool) -> Result<(), &'static str> {
-    if online {
-        bring_cpu_online(cpu_id)
+/// Send Inter-Processor Interrupt
+pub fn send_ipi(target_cpu: u32, vector: u8) -> Result<(), &'static str> {
+    let cpu_data = CPU_DATA.lock();
+    
+    if target_cpu >= CPU_COUNT.load(Ordering::Acquire) {
+        return Err("Invalid CPU ID");
+    }
+    
+    if !cpu_data[target_cpu as usize].online {
+        return Err("Target CPU not online");
+    }
+    
+    let apic_id = cpu_data[target_cpu as usize].apic_id;
+    drop(cpu_data);
+    
+    if let Some(base) = get_apic_base() {
+        unsafe {
+            // Set target APIC ID in ICR high
+            write_apic(base, apic_regs::APIC_ICR_HIGH, apic_id << 24);
+            // Send IPI with vector in ICR low
+            write_apic(base, apic_regs::APIC_ICR_LOW, vector as u32);
+        }
+        Ok(())
     } else {
-        take_cpu_offline(cpu_id)
+        Err("APIC not mapped")
     }
 }
 
-/// IPI handler (called by interrupt handler)
-pub fn handle_ipi(ipi_type: IpiType, _data: u64) {
-    match ipi_type {
-        IpiType::Reschedule => {
-            // Trigger reschedule
+/// Broadcast IPI to all CPUs except self
+pub fn broadcast_ipi(vector: u8) -> Result<(), &'static str> {
+    if let Some(base) = get_apic_base() {
+        unsafe {
+            // Set broadcast mode in ICR high
+            write_apic(base, apic_regs::APIC_ICR_HIGH, 0);
+            // Send IPI with broadcast flag (bit 19) and all except self (bit 18)
+            write_apic(base, apic_regs::APIC_ICR_LOW, 
+                      (vector as u32) | (3 << 18));
         }
-        IpiType::FunctionCall => {
-            // Execute function call
-        }
-        IpiType::TlbInvalidate => {
-            // Invalidate TLB
-        }
-        IpiType::Timer => {
-            // Handle timer
-        }
-        IpiType::Halt => {
-            // Halt CPU
-            crate::arch::halt();
-        }
-        IpiType::Generic => {
-            // Generic IPI handling
+        Ok(())
+    } else {
+        Err("APIC not mapped")
+    }
+}
+
+/// Signal End Of Interrupt
+pub fn eoi() {
+    if let Some(base) = get_apic_base() {
+        unsafe {
+            write_apic(base, apic_regs::APIC_EOI, 0);
         }
     }
 }
 
-/// Cross-CPU function call
-pub fn call_function_on_cpu<F>(cpu_id: u32, _func: F) -> Result<(), &'static str>
-where
-    F: Fn() + Send + 'static,
-{
-    // In a real implementation, this would serialize the function
-    // and send it via IPI to the target CPU
-    send_ipi(cpu_id, IpiType::FunctionCall, 0)
+/// Get Local APIC base address
+fn get_apic_base() -> Option<VirtAddr> {
+    let phys = LOCAL_APIC_BASE.load(Ordering::Acquire);
+    if phys != 0 {
+        // In production, this should be properly mapped by memory manager
+        // For now, return identity-mapped address
+        Some(VirtAddr::new(phys))
+    } else {
+        None
+    }
 }
 
-/// Cross-CPU function call on all CPUs
-pub fn call_function_on_all_cpus<F>(_func: F) -> Result<(), &'static str>
-where
-    F: Fn() + Send + Clone + 'static,
-{
-    send_ipi_all_but_self(IpiType::FunctionCall, 0)
+/// Read APIC register
+unsafe fn read_apic(base: VirtAddr, offset: u32) -> u32 {
+    let addr = (base.as_u64() + offset as u64) as *const u32;
+    addr.read_volatile()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Write APIC register
+unsafe fn write_apic(base: VirtAddr, offset: u32, value: u32) {
+    let addr = (base.as_u64() + offset as u64) as *mut u32;
+    addr.write_volatile(value);
+}
 
-    #[cfg(feature = "disabled-tests")] // #[test]
-    fn test_cpu_info_default() {
-        let info = CpuInfo::default();
-        assert_eq!(info.cpu_id, 0);
-        assert_eq!(info.state, CpuState::Offline);
-    }
+/// Read Model-Specific Register
+unsafe fn read_msr(msr: u32) -> u64 {
+    let (high, low): (u32, u32);
+    core::arch::asm!(
+        "rdmsr",
+        in("ecx") msr,
+        out("eax") low,
+        out("edx") high,
+        options(nomem, nostack, preserves_flags)
+    );
+    ((high as u64) << 32) | (low as u64)
+}
 
-    #[cfg(feature = "disabled-tests")] // #[test]
-    fn test_smp_statistics() {
-        let stats = get_smp_statistics();
-        assert!(stats.total_cpus > 0);
-    }
-
-    #[cfg(feature = "disabled-tests")] // #[test]
-    fn test_cpu_affinity() {
-        assert!(set_cpu_affinity(1).is_ok());
-        assert!(set_cpu_affinity(0).is_err());
-    }
+/// Write Model-Specific Register
+unsafe fn write_msr(msr: u32, value: u64) {
+    let low = value as u32;
+    let high = (value >> 32) as u32;
+    core::arch::asm!(
+        "wrmsr",
+        in("ecx") msr,
+        in("eax") low,
+        in("edx") high,
+        options(nomem, nostack, preserves_flags)
+    );
 }

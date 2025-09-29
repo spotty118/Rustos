@@ -6,7 +6,7 @@
 use super::{Pid, get_process_manager};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
-use crate::vec;
+use alloc::vec;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 

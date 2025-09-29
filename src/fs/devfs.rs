@@ -3,7 +3,9 @@
 //! This module provides a device filesystem that exposes system devices
 //! as files in the /dev directory. It includes standard devices like
 //! null, zero, random, and console.
-use crate::{println, print};
+// Import handled by parent module
+
+use crate::print;
 
 use super::{
     FileSystem, FileSystemType, FileSystemStats, FileMetadata, FileType, FilePermissions,
@@ -395,21 +397,19 @@ impl FileSystem for DevFs {
 
 /// Create a device node (for use by device drivers)
 pub fn create_device_node(
-    name: &str,
+    _name: &str,
     _device_type: DeviceType,
-    major: u32,
-    minor: u32,
+    _major: u32,
+    _minor: u32,
     _permissions: FilePermissions,
 ) -> FsResult<()> {
     // This would be called by device drivers to register new devices
     // For now, we only support the predefined devices
-    println!("Device registration: {} ({}:{}) - not implemented", name, major, minor);
     Err(FsError::NotSupported)
 }
 
 /// Remove a device node
-pub fn remove_device_node(name: &str) -> FsResult<()> {
+pub fn remove_device_node(_name: &str) -> FsResult<()> {
     // This would be called when a device is removed
-    println!("Device removal: {} - not implemented", name);
     Err(FsError::NotSupported)
 }

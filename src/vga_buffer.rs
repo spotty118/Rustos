@@ -1,16 +1,17 @@
-//! VGA Buffer Module for RustOS
+//! Production VGA text mode buffer for RustOS
 //!
-//! This module provides VGA text mode output functionality for kernel console output.
-//! It includes color support, scrolling, and thread-safe writing capabilities.
+//! Provides real VGA text mode output at 0xB8000
 
 use core::fmt;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use lazy_static::lazy_static;
 use spin::Mutex;
 use volatile::Volatile;
+use lazy_static::lazy_static;
 
-/// Standard VGA color palette
-#[allow(dead_code)]
+/// VGA text mode buffer dimensions
+pub const BUFFER_HEIGHT: usize = 25;
+pub const BUFFER_WIDTH: usize = 80;
+
+/// VGA color codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color {
@@ -32,19 +33,18 @@ pub enum Color {
     White = 15,
 }
 
-/// VGA color code combining foreground and background colors
+/// Color combination for foreground and background
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ColorCode(u8);
+struct ColorCode(u8);
 
 impl ColorCode {
-    /// Create a new color code from foreground and background colors
-    pub fn new(foreground: Color, background: Color) -> ColorCode {
+    const fn new(foreground: Color, background: Color) -> Self {
         ColorCode((background as u8) << 4 | (foreground as u8))
     }
 }
 
-/// VGA character cell combining ASCII character and color
+/// VGA text buffer character
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 struct ScreenChar {
@@ -52,17 +52,13 @@ struct ScreenChar {
     color_code: ColorCode,
 }
 
-/// VGA buffer dimensions
-const BUFFER_HEIGHT: usize = 25;
-const BUFFER_WIDTH: usize = 80;
-
-/// VGA buffer representation
+/// VGA text buffer (memory-mapped at 0xB8000)
 #[repr(transparent)]
 struct Buffer {
     chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
-/// VGA writer for handling text output
+/// VGA text mode writer
 pub struct Writer {
     column_position: usize,
     row_position: usize,
@@ -71,62 +67,76 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// Write a single byte to the VGA buffer
+    /// Write a single byte
     pub fn write_byte(&mut self, byte: u8) {
         match byte {
             b'\n' => self.new_line(),
+            b'\r' => self.column_position = 0,
+            b'\t' => {
+                // Tab to next 4-column boundary
+                let tab_stop = (self.column_position + 4) & !3;
+                while self.column_position < tab_stop && self.column_position < BUFFER_WIDTH {
+                    self.write_byte(b' ');
+                }
+            }
+            0x08 => {
+                // Backspace
+                if self.column_position > 0 {
+                    self.column_position -= 1;
+                    self.write_byte(b' ');
+                    self.column_position -= 1;
+                }
+            }
             byte => {
                 if self.column_position >= BUFFER_WIDTH {
                     self.new_line();
                 }
-
+                
                 let row = self.row_position;
                 let col = self.column_position;
-
-                let color_code = self.color_code;
+                
                 self.buffer.chars[row][col].write(ScreenChar {
                     ascii_character: byte,
-                    color_code,
+                    color_code: self.color_code,
                 });
+                
                 self.column_position += 1;
             }
         }
     }
-
-    /// Write a string to the VGA buffer
+    
+    /// Write a string
     pub fn write_string(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
-                // Printable ASCII byte or newline
-                0x20..=0x7e | b'\n' => self.write_byte(byte),
-                // Not part of printable ASCII range
+                // Printable ASCII or newline
+                0x20..=0x7e | b'\n' | b'\r' | b'\t' | 0x08 => self.write_byte(byte),
+                // Non-printable, show a ■
                 _ => self.write_byte(0xfe),
             }
         }
     }
-
-    /// Move to a new line, scrolling if necessary
+    
+    /// Create a new line
     fn new_line(&mut self) {
         if self.row_position >= BUFFER_HEIGHT - 1 {
-            self.scroll_up();
+            // Scroll up
+            for row in 1..BUFFER_HEIGHT {
+                for col in 0..BUFFER_WIDTH {
+                    let character = self.buffer.chars[row][col].read();
+                    self.buffer.chars[row - 1][col].write(character);
+                }
+            }
+            
+            // Clear last line
+            self.clear_row(BUFFER_HEIGHT - 1);
         } else {
             self.row_position += 1;
         }
         self.column_position = 0;
     }
-
-    /// Scroll the entire buffer up by one line
-    fn scroll_up(&mut self) {
-        for row in 1..BUFFER_HEIGHT {
-            for col in 0..BUFFER_WIDTH {
-                let character = self.buffer.chars[row][col].read();
-                self.buffer.chars[row - 1][col].write(character);
-            }
-        }
-        self.clear_row(BUFFER_HEIGHT - 1);
-    }
-
-    /// Clear a specific row
+    
+    /// Clear a row
     fn clear_row(&mut self, row: usize) {
         let blank = ScreenChar {
             ascii_character: b' ',
@@ -136,31 +146,41 @@ impl Writer {
             self.buffer.chars[row][col].write(blank);
         }
     }
-
+    
     /// Clear the entire screen
     pub fn clear_screen(&mut self) {
         for row in 0..BUFFER_HEIGHT {
             self.clear_row(row);
         }
-        self.column_position = 0;
         self.row_position = 0;
+        self.column_position = 0;
+        self.update_cursor();
     }
-
-    /// Set the current color
+    
+    /// Set color for future writes
     pub fn set_color(&mut self, foreground: Color, background: Color) {
         self.color_code = ColorCode::new(foreground, background);
     }
-
-    /// Get current cursor position
-    pub fn get_position(&self) -> (usize, usize) {
-        (self.row_position, self.column_position)
+    
+    /// Set cursor position
+    pub fn set_cursor_position(&mut self, row: usize, col: usize) {
+        self.row_position = row.min(BUFFER_HEIGHT - 1);
+        self.column_position = col.min(BUFFER_WIDTH - 1);
+        self.update_cursor();
     }
 
-    /// Set cursor position
-    pub fn set_position(&mut self, row: usize, col: usize) {
-        if row < BUFFER_HEIGHT && col < BUFFER_WIDTH {
-            self.row_position = row;
-            self.column_position = col;
+    /// Update hardware cursor position
+    pub fn update_cursor(&self) {
+        let pos = self.row_position * BUFFER_WIDTH + self.column_position;
+
+        unsafe {
+            // Cursor location low byte
+            x86_64::instructions::port::Port::<u8>::new(0x3D4).write(0x0F);
+            x86_64::instructions::port::Port::<u8>::new(0x3D5).write((pos & 0xFF) as u8);
+
+            // Cursor location high byte
+            x86_64::instructions::port::Port::<u8>::new(0x3D4).write(0x0E);
+            x86_64::instructions::port::Port::<u8>::new(0x3D5).write((pos >> 8) as u8);
         }
     }
 }
@@ -172,9 +192,9 @@ impl fmt::Write for Writer {
     }
 }
 
-/// Global VGA writer instance
 lazy_static! {
-    pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer {
+    /// Global VGA writer instance
+    pub static ref VGA_WRITER: Mutex<Writer> = Mutex::new(Writer {
         column_position: 0,
         row_position: 0,
         color_code: ColorCode::new(Color::White, Color::Black),
@@ -182,120 +202,56 @@ lazy_static! {
     });
 }
 
-/// Print function for VGA output
-pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    WRITER.lock().write_fmt(args).expect("Printing to VGA failed");
+/// Initialize VGA buffer
+pub fn init() {
+    let mut writer = VGA_WRITER.lock();
+    writer.clear_screen();
 }
 
-/// VGA-based print macro
+/// Print to VGA buffer (internal macro use)
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    use x86_64::instructions::interrupts;
+    
+    // Disable interrupts to prevent deadlock
+    interrupts::without_interrupts(|| {
+        VGA_WRITER.lock().write_fmt(args).unwrap();
+    });
+}
+
+/// Print macro for VGA output
 #[macro_export]
 macro_rules! vga_print {
     ($($arg:tt)*) => ($crate::vga_buffer::_print(format_args!($($arg)*)));
 }
 
-/// VGA-based println macro
+/// Print with newline macro for VGA output
 #[macro_export]
 macro_rules! vga_println {
     () => ($crate::vga_print!("\n"));
     ($($arg:tt)*) => ($crate::vga_print!("{}\n", format_args!($($arg)*)));
 }
 
-/// Print with color formatting
-pub fn print_colored(text: &str, fg: Color, bg: Color) {
-    let mut writer = WRITER.lock();
-    let old_color = writer.color_code;
-    writer.set_color(fg, bg);
-    writer.write_string(text);
-    writer.color_code = old_color;
+/// Clear the VGA screen
+pub fn clear() {
+    VGA_WRITER.lock().clear_screen();
 }
 
-/// Print a banner with colored text
-pub fn print_banner(text: &str, fg: Color, bg: Color) {
-    let mut writer = WRITER.lock();
-    let old_color = writer.color_code;
-    
-    // Print top border
-    writer.set_color(fg, bg);
-    writer.write_string("=");
-    for _ in 0..text.len() + 2 {
-        writer.write_string("=");
-    }
-    writer.write_string("=\n");
-    
-    // Print text with padding
-    writer.write_string("= ");
-    writer.write_string(text);
-    writer.write_string(" =\n");
-    
-    // Print bottom border
-    writer.write_string("=");
-    for _ in 0..text.len() + 2 {
-        writer.write_string("=");
-    }
-    writer.write_string("=\n");
-    
-    writer.color_code = old_color;
+/// Set VGA color
+pub fn set_color(foreground: Color, background: Color) {
+    VGA_WRITER.lock().set_color(foreground, background);
 }
 
-/// Initialize VGA buffer system
-pub fn init() {
-    WRITER.lock().clear_screen();
+/// Get current cursor position
+pub fn cursor_position() -> (usize, usize) {
+    let writer = VGA_WRITER.lock();
+    (writer.column_position, writer.row_position)
 }
 
-/// Get VGA buffer statistics
-pub fn get_vga_stats() -> VgaStats {
-    let writer = WRITER.lock();
-    let (row, col) = writer.get_position();
-    VgaStats {
-        cursor_row: row,
-        cursor_column: col,
-        buffer_width: BUFFER_WIDTH,
-        buffer_height: BUFFER_HEIGHT,
-    }
-}
-
-/// VGA buffer statistics
-#[derive(Debug, Clone)]
-pub struct VgaStats {
-    pub cursor_row: usize,
-    pub cursor_column: usize,
-    pub buffer_width: usize,
-    pub buffer_height: usize,
-}
-
-/// Global character counter for debugging
-static CHAR_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-/// Get total characters written
-pub fn get_char_count() -> usize {
-    CHAR_COUNT.load(Ordering::Relaxed)
-}
-
-/// Reset character counter
-pub fn reset_char_count() {
-    CHAR_COUNT.store(0, Ordering::Relaxed);
-}
-
-/// Increment character counter (used internally)
-pub fn increment_char_count() {
-    CHAR_COUNT.fetch_add(1, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(feature = "disabled-tests")] // #[test]
-    fn test_color_code_creation() {
-        let color = ColorCode::new(Color::White, Color::Black);
-        assert_eq!(color.0, 15); // White on black
-    }
-
-    #[cfg(feature = "disabled-tests")] // #[test]
-    fn test_vga_stats() {
-        let stats = get_vga_stats();
-        assert_eq!(stats.buffer_width, BUFFER_WIDTH);
-        assert_eq!(stats.buffer_height, BUFFER_HEIGHT);
-    }
+/// Set cursor position
+pub fn set_cursor_position(row: usize, col: usize) {
+    let mut writer = VGA_WRITER.lock();
+    writer.row_position = row.min(BUFFER_HEIGHT - 1);
+    writer.column_position = col.min(BUFFER_WIDTH - 1);
 }

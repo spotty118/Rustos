@@ -6,7 +6,7 @@
 use super::{ExtendedNetworkCapabilities, EnhancedNetworkStats};
 use crate::network::drivers::{NetworkDriver, DeviceType, DeviceState, DeviceCapabilities};
 use crate::network::{NetworkError, NetworkStats, MacAddress};
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 /// Realtek device information

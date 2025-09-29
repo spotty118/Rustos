@@ -3,7 +3,7 @@
 //! This module provides UDP functionality for the RustOS network stack,
 //! including packet handling, socket management, and port binding.
 
-use crate::{BTreeMap, Vec};
+use alloc::{collections::BTreeMap, vec::Vec};
 // use core::fmt;
 
 use crate::network::{Ipv4Address, NetworkError, SocketAddr};

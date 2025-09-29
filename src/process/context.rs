@@ -197,28 +197,28 @@ impl ContextSwitcher {
         );
 
         // Save stack pointer
-        asm!("mov {}, rsp", out(reg) context.rsp);
+        asm!("mov {0:r}, rsp", out(reg) context.rsp);
 
         // Save flags
-        asm!("pushf; pop {}", out(reg) context.rflags);
+        asm!("pushf; pop {0:r}", out(reg) context.rflags);
 
         // Save segment registers
-        asm!("mov {}, cs", out(reg) context.cs);
-        asm!("mov {}, ds", out(reg) context.ds);
-        asm!("mov {}, es", out(reg) context.es);
-        asm!("mov {}, fs", out(reg) context.fs);
-        asm!("mov {}, gs", out(reg) context.gs);
-        asm!("mov {}, ss", out(reg) context.ss);
+        asm!("mov {0:x}, cs", out(reg) context.cs);
+        asm!("mov {0:x}, ds", out(reg) context.ds);
+        asm!("mov {0:x}, es", out(reg) context.es);
+        asm!("mov {0:x}, fs", out(reg) context.fs);
+        asm!("mov {0:x}, gs", out(reg) context.gs);
+        asm!("mov {0:x}, ss", out(reg) context.ss);
     }
 
     /// Restore CPU context
     unsafe fn restore_cpu_context(&self, context: &CpuContext) {
         // Restore segment registers
         asm!(
-            "mov ds, {}",
-            "mov es, {}",
-            "mov fs, {}",
-            "mov gs, {}",
+            "mov ds, {0:x}",
+            "mov es, {1:x}",
+            "mov fs, {2:x}",
+            "mov gs, {3:x}",
             in(reg) context.ds,
             in(reg) context.es,
             in(reg) context.fs,
@@ -318,9 +318,9 @@ impl ContextSwitcher {
         if self.has_sse() {
             // Enable SSE and FXSAVE/FXRSTOR
             let mut cr4: u64;
-            asm!("mov {}, cr4", out(reg) cr4);
+            asm!("mov {0:r}, cr4", out(reg) cr4);
             cr4 |= (1 << 9) | (1 << 10); // OSFXSR and OSXMMEXCPT
-            asm!("mov cr4, {}", in(reg) cr4);
+            asm!("mov cr4, {0:r}", in(reg) cr4);
         }
 
         // Clear task switched flag
@@ -333,6 +333,31 @@ impl ContextSwitcher {
     fn has_sse(&self) -> bool {
         // Check CPUID for SSE support using the intrinsic to avoid clobbering RBX
         unsafe { (__cpuid(1).edx & (1 << 25)) != 0 }
+    }
+
+    /// Check if processor has XSAVE support
+    fn has_xsave(&self) -> bool {
+        unsafe { (__cpuid(1).ecx & (1 << 26)) != 0 }
+    }
+
+    /// Check if processor has AVX support
+    fn has_avx(&self) -> bool {
+        unsafe {
+            let cpuid = __cpuid(1);
+            (cpuid.ecx & (1 << 28)) != 0 && (cpuid.ecx & (1 << 26)) != 0 // AVX + XSAVE
+        }
+    }
+
+    /// Get XSAVE area size
+    fn get_xsave_area_size(&self) -> usize {
+        if self.has_xsave() {
+            unsafe {
+                let cpuid = __cpuid(13); // XSAVE features
+                cpuid.ecx as usize
+            }
+        } else {
+            512 // Standard FXSAVE area size
+        }
     }
 
     /// Clear task switched flag in CR0
@@ -391,6 +416,15 @@ impl ContextSwitcher {
     pub fn set_fpu_lazy_switching(&mut self, enable: bool) {
         self.fpu_lazy_switching = enable;
     }
+}
+
+/// Context switcher performance statistics
+#[derive(Debug, Clone)]
+pub struct ContextSwitcherStats {
+    pub total_switches: u64,
+    pub average_switch_time: u64,
+    pub fpu_owner: Option<super::Pid>,
+    pub lazy_fpu_enabled: bool,
 }
 
 /// Assembly function for low-level context switch

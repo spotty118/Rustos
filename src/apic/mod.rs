@@ -3,7 +3,6 @@
 //! This module implements Local APIC and IO APIC configuration using ACPI MADT data.
 //! It provides modern interrupt handling capabilities beyond the legacy PIC.
 
-use crate::println;
 use core::ptr;
 use x86_64::VirtAddr;
 use crate::acpi::{MadtInfo, InterruptOverride};
@@ -240,8 +239,6 @@ impl ApicSystem {
         let mut local_apic = unsafe { LocalApic::new(local_apic_virt) };
         local_apic.init()?;
         
-        println!("Local APIC initialized at virtual address 0x{:x}", local_apic_virt.as_u64());
-        println!("Local APIC ID: {}, Version: 0x{:x}", local_apic.id(), local_apic.version());
         
         self.local_apic = Some(local_apic);
 
@@ -252,8 +249,6 @@ impl ApicSystem {
                 IoApic::new(ioapic_virt, acpi_ioapic.id, acpi_ioapic.global_system_interrupt_base)?
             };
             
-            println!("IO APIC {} initialized: base 0x{:x}, GSI base {}, max redirections {}",
-                ioapic.id(), ioapic_virt.as_u64(), ioapic.gsi_base(), ioapic.max_redirections());
             
             self.io_apics.push(ioapic);
         }
@@ -261,10 +256,7 @@ impl ApicSystem {
         // Store interrupt overrides
         self.interrupt_overrides = madt.interrupt_overrides.clone();
         
-        for override_entry in &self.interrupt_overrides {
-            println!("IRQ override: bus {} IRQ {} -> GSI {} (flags 0x{:04x})",
-                override_entry.bus_source, override_entry.irq_source,
-                override_entry.global_system_interrupt, override_entry.flags);
+        for _override_entry in &self.interrupt_overrides {
         }
 
         Ok(())
@@ -304,8 +296,6 @@ impl ApicSystem {
 
         ioapic.write_redirection_entry(local_irq, entry);
         
-        println!("Configured IRQ {} -> GSI {} -> IO APIC {} entry {} (vector {})",
-            irq, gsi, ioapic.id(), local_irq, vector);
 
         Ok(())
     }
@@ -359,4 +349,9 @@ pub fn end_of_interrupt() {
 /// Configure an IRQ with the APIC system
 pub fn configure_irq(irq: u8, vector: u8, cpu_id: u8) -> Result<(), &'static str> {
     APIC_SYSTEM.lock().configure_irq(irq, vector, cpu_id)
+}
+
+/// Check if APIC is available and initialized
+pub fn is_apic_available() -> bool {
+    APIC_SYSTEM.lock().is_initialized()
 }

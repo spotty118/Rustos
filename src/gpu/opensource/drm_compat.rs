@@ -4,8 +4,10 @@
 //! functionality for RustOS, enabling opensource drivers to work.
 
 use alloc::vec::Vec;
-use alloc::string::String;
+use alloc::vec;
+use alloc::string::{String, ToString};
 use alloc::collections::BTreeMap;
+use alloc::format;
 
 /// DRM device types
 #[derive(Debug, Clone, Copy, PartialEq)]

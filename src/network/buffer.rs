@@ -3,8 +3,8 @@
 //! This module provides efficient buffer management for network operations,
 //! including packet buffers, ring buffers, buffer pools, and zero-copy operations.
 
-use crate::vec;
-use crate::{Box, Vec};
+use alloc::vec;
+use alloc::{boxed::Box, vec::Vec};
 use alloc::collections::VecDeque;
 // use alloc::string::ToString; // Unused
 // use core::mem;

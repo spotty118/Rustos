@@ -5,17 +5,17 @@ edition = "2021"
 authors = ["RustOS Team"]
 description = "RustOS - Hardware-Optimized AI Operating System with Desktop Environment"
 
-[lib]
-name = "rustos"
-path = "src/lib.rs"
+# [lib]
+# name = "rustos"
+# path = "src/lib.rs"
 
 [[bin]]
 name = "rustos"
 path = "src/main.rs"
 
 [dependencies]
-# Core bootloader runtime support
-bootloader_api = "0.11.3"
+# Core bootloader support (compatible with bootimage)
+# bootloader_api = "0.11.3" # Disabled for bootimage compatibility
 
 # Low-level hardware access
 volatile = "0.2.6"
@@ -42,13 +42,37 @@ heapless = "0.7"
 version = "1.0"
 features = ["spin_no_std"]
 
-[build-dependencies]
-bootloader = { version = "0.11.12" }
+# Additional no_std compatible dependencies
+[dependencies.nb]
+version = "1.1"
+default-features = false
 
-[package.metadata.bootloader]
-target = ["x86_64-bios", "x86_64-uefi"]
+[dependencies.embedded-hal]
+version = "0.2"
+default-features = false
+
+[dependencies.log]
+version = "0.4"
+default-features = false
+
+[dependencies.paste]
+version = "1.0"
+
+# Bootloader support for bootimage compatibility
+[dependencies.bootloader]
+version = "0.9.23"
+
 # Bitflags for flag constants
-bitflags = "1.3"
+[dependencies.bitflags]
+version = "1.3"
+default-features = false
+
+# Math library for no_std
+[dependencies.libm]
+version = "0.2"
+default-features = false
+
+[build-dependencies]
 
 # Build profiles
 [profile.dev]

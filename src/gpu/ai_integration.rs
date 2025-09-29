@@ -8,7 +8,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cmp::{self, Ordering};
+use core::cmp;
 use lazy_static::lazy_static;
 use spin::Mutex;
 

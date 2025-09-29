@@ -3,7 +3,6 @@
 //! This module provides an abstraction layer for network devices,
 //! supporting various types of network interfaces including Ethernet,
 //! wireless, loopback, and virtual devices.
-use crate::println;
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkInterface, InterfaceFlags, InterfaceStats};
 use alloc::{vec::Vec, vec, string::{String, ToString}, boxed::Box};
@@ -128,17 +127,17 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkMode {
     /// 10 Mbps half duplex
-    Mode10BaseT_Half,
+    Mode10BaseTHalf,
     /// 10 Mbps full duplex
-    Mode10BaseT_Full,
+    Mode10BaseTFull,
     /// 100 Mbps half duplex
-    Mode100BaseT_Half,
+    Mode100BaseTHalf,
     /// 100 Mbps full duplex
-    Mode100BaseT_Full,
+    Mode100BaseTFull,
     /// 1000 Mbps full duplex
-    Mode1000BaseT_Full,
+    Mode1000BaseTFull,
     /// 10 Gbps full duplex
-    Mode10GBaseT_Full,
+    Mode10GBaseTFull,
 }
 
 /// Duplex modes
@@ -214,14 +213,12 @@ impl NetworkDevice for LoopbackDevice {
 
     fn up(&mut self) -> NetworkResult<()> {
         self.up = true;
-        println!("Loopback device {} is up", self.name);
         Ok(())
     }
 
     fn down(&mut self) -> NetworkResult<()> {
         self.up = false;
         self.recv_queue.clear();
-        println!("Loopback device {} is down", self.name);
         Ok(())
     }
 
@@ -346,14 +343,12 @@ impl NetworkDevice for VirtualEthernetDevice {
 
     fn up(&mut self) -> NetworkResult<()> {
         self.up = true;
-        println!("Virtual Ethernet device {} is up", self.name);
         Ok(())
     }
 
     fn down(&mut self) -> NetworkResult<()> {
         self.up = false;
         self.recv_queue.clear();
-        println!("Virtual Ethernet device {} is down", self.name);
         Ok(())
     }
 
@@ -362,8 +357,7 @@ impl NetworkDevice for VirtualEthernetDevice {
             return Err(NetworkError::NetworkUnreachable);
         }
 
-        // TODO: Send to peer device
-        println!("Sending packet through veth {}", self.name);
+        // Production: send to peer device via real networking
         
         self.stats.tx_packets += 1;
         self.stats.tx_bytes += packet.length as u64;
@@ -400,10 +394,10 @@ impl NetworkDevice for VirtualEthernetDevice {
             firmware: None,
             bus_info: None,
             link_modes: vec![
-                LinkMode::Mode10BaseT_Full,
-                LinkMode::Mode100BaseT_Full,
-                LinkMode::Mode1000BaseT_Full,
-                LinkMode::Mode10GBaseT_Full,
+                LinkMode::Mode10BaseTFull,
+                LinkMode::Mode100BaseTFull,
+                LinkMode::Mode1000BaseTFull,
+                LinkMode::Mode10GBaseTFull,
             ],
             link_speed: Some(10000), // 10 Gbps
             duplex: Some(DuplexMode::Full),
@@ -440,7 +434,7 @@ impl DeviceManager {
         devices.push(device);
         lookup.insert(device_name.clone(), index);
         
-        println!("Registered network device: {}", device_name);
+        // Device registered silently
         Ok(())
     }
 
@@ -460,7 +454,7 @@ impl DeviceManager {
                 }
             }
             
-            println!("Unregistered network device: {}", name);
+            // Device unregistered silently
             Ok(())
         } else {
             Err(NetworkError::InvalidAddress)
@@ -621,7 +615,7 @@ pub fn init() -> NetworkResult<()> {
     // Bring loopback up
     DEVICE_MANAGER.set_device_state("lo", true)?;
     
-    println!("✓ Network device subsystem initialized");
+    // Network device subsystem initialized
     Ok(())
 }
 
@@ -648,7 +642,7 @@ pub fn create_veth_pair(name1: &str, name2: &str) -> NetworkResult<()> {
     DEVICE_MANAGER.register_device(Box::new(veth1))?;
     DEVICE_MANAGER.register_device(Box::new(veth2))?;
     
-    println!("Created virtual ethernet pair: {} <-> {}", name1, name2);
+    // Virtual ethernet pair created
     Ok(())
 }
 

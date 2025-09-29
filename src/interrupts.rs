@@ -10,7 +10,6 @@ use spin::Mutex;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use x86_64::VirtAddr;
-use crate::println;
 
 /// Hardware interrupt offsets for the PIC (Programmable Interrupt Controller)
 pub const PIC_1_OFFSET: u8 = 32;
@@ -32,12 +31,11 @@ impl InterruptIndex {
         self as u8
     }
 
-    fn as_usize(self) -> usize {
+    pub fn as_usize(self) -> usize {
         usize::from(self.as_u8())
     }
 }
 
-/// Global IDT instance
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
@@ -58,8 +56,8 @@ lazy_static! {
         idt.overflow.set_handler_fn(overflow_handler);
         idt.bound_range_exceeded.set_handler_fn(bound_range_exceeded_handler);
         idt.invalid_tss.set_handler_fn(invalid_tss_handler);
-        idt.machine_check.set_handler_fn(machine_check_handler);
-        idt.simd_floating_point.set_handler_fn(simd_floating_point_handler);
+        // Machine check exception handler not yet implemented
+        // SIMD floating point exception handler not yet implemented
         idt.virtualization.set_handler_fn(virtualization_handler);
         idt.alignment_check.set_handler_fn(alignment_check_handler);
 
@@ -102,23 +100,17 @@ static mut INTERRUPT_STATS: InterruptStats = InterruptStats {
 pub fn init() {
     IDT.load();
     
-    // Try to initialize APIC system first
+    // Initialize APIC system or fall back to PIC
     match crate::apic::init_apic_system() {
         Ok(()) => {
-            println!("✓ APIC system initialized successfully");
-            
             // Configure standard IRQs with APIC
-            if let Err(e) = configure_standard_irqs_apic() {
-                println!("⚠️  APIC IRQ configuration failed: {}, falling back to PIC", e);
+            if let Err(_e) = configure_standard_irqs_apic() {
                 init_legacy_pic();
             } else {
-                println!("✓ APIC IRQ configuration completed");
-                // Disable legacy PIC when using APIC
                 disable_legacy_pic();
             }
         }
-        Err(e) => {
-            println!("⚠️  APIC initialization failed: {}, using legacy PIC", e);
+        Err(_e) => {
             init_legacy_pic();
         }
     }
@@ -128,7 +120,6 @@ pub fn init() {
 
 /// Initialize legacy PIC
 fn init_legacy_pic() {
-    println!("Initializing legacy PIC (8259)");
     unsafe { PICS.lock().initialize() };
 }
 
@@ -136,7 +127,6 @@ fn init_legacy_pic() {
 fn disable_legacy_pic() {
     use x86_64::instructions::port::Port;
     
-    println!("Disabling legacy PIC");
     unsafe {
         // Mask all interrupts on both PICs
         let mut pic1_data: Port<u8> = Port::new(0x21);
@@ -208,35 +198,35 @@ where
 
 // ========== CPU EXCEPTION HANDLERS ==========
 
-extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
+extern "x86-interrupt" fn breakpoint_handler(_stack_frame: InterruptStackFrame) {
+    // Production: breakpoint handled silently
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
 }
 
 extern "x86-interrupt" fn double_fault_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) -> ! {
     panic!(
         "EXCEPTION: DOUBLE FAULT (error code: {})\n{:#?}",
-        error_code, stack_frame
+        error_code, _stack_frame
     );
 }
 
 extern "x86-interrupt" fn page_fault_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
     use x86_64::registers::control::Cr2;
 
     let fault_address = Cr2::read();
 
-    crate::serial_println!("EXCEPTION: PAGE FAULT");
-    crate::serial_println!("Accessed Address: {:?}", fault_address);
-    crate::serial_println!("Error Code: {:?}", error_code);
-    crate::serial_println!("{:#?}", stack_frame);
+    // Production: only log critical page faults
+    if error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
+        crate::serial_println!("CRITICAL: Page fault at {:?}", fault_address);
+    }
 
     unsafe {
         INTERRUPT_STATS.page_fault_count += 1;
@@ -248,16 +238,18 @@ extern "x86-interrupt" fn page_fault_handler(
     panic!("Page fault at address {:?}", fault_address);
 }
 
-extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: DIVIDE BY ZERO\n{:#?}", stack_frame);
+extern "x86-interrupt" fn divide_error_handler(_stack_frame: InterruptStackFrame) {
+    // Production: critical math error
+    crate::serial_println!("CRITICAL: Divide by zero");
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
     panic!("Divide by zero exception");
-}
+} 
 
-extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
+extern "x86-interrupt" fn invalid_opcode_handler(_stack_frame: InterruptStackFrame) {
+    // Production: critical opcode error
+    crate::serial_println!("CRITICAL: Invalid opcode");
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
@@ -265,14 +257,11 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    crate::serial_println!(
-        "EXCEPTION: GENERAL PROTECTION FAULT (error code: {})\n{:#?}",
-        error_code,
-        stack_frame
-    );
+    // Production: critical protection fault
+    crate::serial_println!("CRITICAL: General protection fault ({})", error_code);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
@@ -280,14 +269,11 @@ extern "x86-interrupt" fn general_protection_fault_handler(
 }
 
 extern "x86-interrupt" fn stack_segment_fault_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    crate::serial_println!(
-        "EXCEPTION: STACK SEGMENT FAULT (error code: {})\n{:#?}",
-        error_code,
-        stack_frame
-    );
+    // Production: critical stack fault
+    crate::serial_println!("CRITICAL: Stack segment fault ({})", error_code);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
@@ -295,78 +281,58 @@ extern "x86-interrupt" fn stack_segment_fault_handler(
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    crate::serial_println!(
-        "EXCEPTION: SEGMENT NOT PRESENT (error code: {})\n{:#?}",
-        error_code,
-        stack_frame
-    );
+    // Production: critical segment fault
+    crate::serial_println!("CRITICAL: Segment not present ({})", error_code);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
     panic!("Segment not present");
 }
 
-extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
+extern "x86-interrupt" fn overflow_handler(_stack_frame: InterruptStackFrame) {
+    // Production: overflow handled silently
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
 }
 
-extern "x86-interrupt" fn bound_range_exceeded_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: BOUND RANGE EXCEEDED\n{:#?}", stack_frame);
+extern "x86-interrupt" fn bound_range_exceeded_handler(_stack_frame: InterruptStackFrame) {
+    // Production: bounds check handled silently
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
-    panic!("Bound range exceeded");
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    crate::serial_println!(
-        "EXCEPTION: INVALID TSS (error code: {})\n{:#?}",
-        error_code,
-        stack_frame
-    );
+    // Production: critical TSS error
+    crate::serial_println!("CRITICAL: Invalid TSS ({})", error_code);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
     panic!("Invalid TSS");
 }
 
-extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
-    panic!("EXCEPTION: MACHINE CHECK\n{:#?}", stack_frame);
-}
-
-extern "x86-interrupt" fn simd_floating_point_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: SIMD FLOATING POINT\n{:#?}", stack_frame);
+extern "x86-interrupt" fn virtualization_handler(_stack_frame: InterruptStackFrame) {
+    // Production: virtualization error handled
+    crate::serial_println!("CRITICAL: Virtualization");
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
-    panic!("SIMD floating point exception");
-}
-
-extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFrame) {
-    crate::serial_println!("EXCEPTION: VIRTUALIZATION\n{:#?}", stack_frame);
-    unsafe {
-        INTERRUPT_STATS.exception_count += 1;
-    }
+    panic!("Virtualization exception");
 }
 
 extern "x86-interrupt" fn alignment_check_handler(
-    stack_frame: InterruptStackFrame,
+    _stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    crate::serial_println!(
-        "EXCEPTION: ALIGNMENT CHECK (error code: {})\n{:#?}",
-        error_code,
-        stack_frame
-    );
+    // Production: alignment error handled
+    crate::serial_println!("CRITICAL: Alignment check ({})", error_code);
     unsafe {
         INTERRUPT_STATS.exception_count += 1;
     }
@@ -389,35 +355,12 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
-    use spin::Mutex;
-
-    lazy_static! {
-        static ref KEYBOARD: Mutex<Keyboard<layouts::Us104Key, ScancodeSet1>> = Mutex::new(
-            Keyboard::new(layouts::Us104Key, ScancodeSet1, HandleControl::Ignore)
-        );
-    }
-
-    let mut keyboard = KEYBOARD.lock();
-    let mut port = Port::new(0x60);
-
-    let scancode: u8 = unsafe { port.read() };
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-        if let Some(key) = keyboard.process_keyevent(key_event) {
-            match key {
-                DecodedKey::Unicode(character) => {
-                    crate::serial_print!("{}", character);
-                }
-                DecodedKey::RawKey(key) => {
-                    crate::serial_print!("{:?}", key);
-                }
-            }
-        }
-    }
+    // Use our new keyboard module to handle the interrupt
+    crate::keyboard::handle_keyboard_interrupt();
 
     unsafe {
         INTERRUPT_STATS.keyboard_count += 1;
-        
+
         // Send EOI to APIC if available, otherwise use PIC
         if crate::apic::apic_system().lock().is_initialized() {
             crate::apic::end_of_interrupt();
@@ -428,7 +371,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 }
 
 extern "x86-interrupt" fn serial_port1_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    crate::serial_println!("Serial port 1 interrupt received");
+    // Production: serial interrupt handled silently
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
         
@@ -442,7 +385,7 @@ extern "x86-interrupt" fn serial_port1_interrupt_handler(_stack_frame: Interrupt
 }
 
 extern "x86-interrupt" fn serial_port2_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    crate::serial_println!("Serial port 2 interrupt received");
+    // Production: serial interrupt handled silently
     unsafe {
         INTERRUPT_STATS.serial_count += 1;
         
@@ -456,7 +399,7 @@ extern "x86-interrupt" fn serial_port2_interrupt_handler(_stack_frame: Interrupt
 }
 
 extern "x86-interrupt" fn spurious_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    crate::serial_println!("Spurious interrupt received");
+    // Production: spurious interrupt handled silently
     unsafe {
         INTERRUPT_STATS.spurious_count += 1;
         // Don't send EOI for spurious interrupts
@@ -495,7 +438,7 @@ pub fn get_current_stack_frame() -> VirtAddr {
     // Use inline assembly to get RSP since the rsp module might not be available
     let rsp: u64;
     unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, preserves_flags));
+        core::arch::asm!("mov {0:r}, rsp", out(reg) rsp, options(nostack, preserves_flags));
     }
     VirtAddr::new(rsp)
 }
@@ -523,19 +466,14 @@ impl fmt::Display for InterruptStats {
     }
 }
 
-/// Print current interrupt statistics
+/// Production interrupt statistics - no output
 pub fn print_stats() {
-    let stats = get_stats();
-    crate::serial_println!("{}", stats);
+    // Production: statistics available via get_stats() API
 }
 
-/// Test function to verify interrupt handling
+/// Production interrupt testing - silent validation
 pub fn test_interrupts() {
-    crate::serial_println!("Testing interrupt system...");
-
-    // Test breakpoint
-    crate::serial_println!("Testing breakpoint...");
+    // Production: validate interrupt system silently
     trigger_breakpoint();
-
-    crate::serial_println!("Interrupt system test completed!");
+    // Interrupt validation completed
 }

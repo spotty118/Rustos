@@ -5,7 +5,7 @@
 //! driver management and device registration.
 
 // Removed unused imports
-use crate::{Box, String, Vec, BTreeMap};
+use alloc::{boxed::Box, string::String, vec::Vec, collections::BTreeMap};
 // use alloc::string::ToString; // Unused
 use core::fmt;
 use spin::RwLock;

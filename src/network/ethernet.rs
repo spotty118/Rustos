@@ -4,7 +4,7 @@
 //! for the RustOS network stack, including frame parsing, construction,
 //! and validation.
 
-use crate::Vec;
+use alloc::vec::Vec;
 // use core::mem::size_of;
 
 use crate::network::{MacAddress, NetworkError};

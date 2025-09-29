@@ -12,6 +12,8 @@ pub mod ethernet;
 pub mod ip;
 pub mod tcp;
 pub mod udp;
+pub mod icmp;
+pub mod arp;
 pub mod socket;
 pub mod device;
 
@@ -19,7 +21,6 @@ use alloc::{vec::Vec, vec, collections::BTreeMap, string::{String, ToString}};
 use spin::{RwLock, Mutex};
 use lazy_static::lazy_static;
 use core::fmt;
-use crate::println;
 
 /// Network address types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -341,7 +342,6 @@ impl NetworkStack {
             return Err(NetworkError::AddressInUse);
         }
 
-        println!("Added network interface: {} ({})", interface.name, interface.mac_address);
         interfaces.insert(interface.name.clone(), interface);
         Ok(())
     }
@@ -351,7 +351,6 @@ impl NetworkStack {
         let mut interfaces = self.interfaces.write();
         
         if interfaces.remove(name).is_some() {
-            println!("Removed network interface: {}", name);
             Ok(())
         } else {
             Err(NetworkError::InvalidAddress)
@@ -376,7 +375,6 @@ impl NetworkStack {
         
         if let Some(interface) = interfaces.get_mut(name) {
             interface.flags.up = up;
-            println!("Interface {} is now {}", name, if up { "up" } else { "down" });
             Ok(())
         } else {
             Err(NetworkError::InvalidAddress)
@@ -390,7 +388,6 @@ impl NetworkStack {
         if let Some(interface) = interfaces.get_mut(interface_name) {
             if !interface.ip_addresses.contains(&address) {
                 interface.ip_addresses.push(address);
-                println!("Added IP address {} to interface {}", address, interface_name);
             }
             Ok(())
         } else {
@@ -403,10 +400,6 @@ impl NetworkStack {
         let mut routing_table = self.routing_table.write();
         routing_table.push(route.clone());
         
-        println!("Added route: {} via {} ({})", 
-            route.destination, 
-            route.gateway.map(|g| g.to_string()).unwrap_or_else(|| "direct".to_string()),
-            route.interface);
         
         Ok(())
     }
@@ -441,16 +434,15 @@ impl NetworkStack {
         }
     }
 
-    /// Update ARP table
+    /// Update ARP table (delegated to enhanced ARP module)
     pub fn update_arp(&self, ip: NetworkAddress, mac: NetworkAddress) {
-        let mut arp_table = self.arp_table.write();
-        arp_table.insert(ip, mac);
+        // Use enhanced ARP module
+        arp::update_arp_entry(ip, mac, "default".to_string()).ok();
     }
 
-    /// Lookup MAC address for IP
+    /// Lookup MAC address for IP (delegated to enhanced ARP module)
     pub fn lookup_arp(&self, ip: &NetworkAddress) -> Option<NetworkAddress> {
-        let arp_table = self.arp_table.read();
-        arp_table.get(ip).copied()
+        arp::lookup_arp(ip)
     }
 
     /// Create a new socket
@@ -522,7 +514,6 @@ impl NetworkStack {
         }
 
         // TODO: Send to network device
-        println!("Sending {} bytes on interface {}", packet.length, interface_name);
         Ok(())
     }
 
@@ -606,7 +597,6 @@ pub fn init() -> NetworkResult<()> {
     };
     NETWORK_STACK.add_route(loopback_route)?;
 
-    println!("✓ Network stack initialized with loopback interface");
     Ok(())
 }
 

@@ -5,7 +5,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use crate::{String, ToString};
+use alloc::string::{String, ToString};
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 
@@ -14,6 +14,8 @@ pub mod syscalls;
 pub mod context;
 pub mod sync;
 pub mod integration;
+pub mod thread;
+pub mod ipc;
 
 /// Process ID type
 pub type Pid = u32;
@@ -167,6 +169,8 @@ pub struct ProcessControlBlock {
     pub next_fd: u32,
     /// Process scheduling information
     pub sched_info: SchedulingInfo,
+    /// Main thread ID for this process
+    pub main_thread: Option<thread::Tid>,
 }
 
 /// File descriptor information
@@ -225,6 +229,7 @@ impl ProcessControlBlock {
                 last_scheduled: 0,
                 cpu_affinity: 0xFFFFFFFFFFFFFFFF, // All CPUs
             },
+            main_thread: None,
         };
 
         // Set process name
@@ -366,6 +371,10 @@ impl ProcessManager {
             scheduler.add_process(pid, priority)?;
         }
 
+        // Initialize IPC state for new process
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.init_process_signals(pid)?;
+
         Ok(pid)
     }
 
@@ -380,6 +389,13 @@ impl ProcessManager {
                 return Err("Process not found");
             }
         }
+
+        // Terminate all threads for this process
+        self.terminate_process_threads(pid)?;
+
+        // Cleanup IPC resources
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.cleanup_process_ipc(pid)?;
 
         // Remove from scheduler
         {
@@ -474,6 +490,102 @@ impl ProcessManager {
             (pid, pcb.name_str().to_string(), pcb.state, pcb.priority)
         }).collect()
     }
+
+    /// Create a thread for a process
+    pub fn create_thread(
+        &self,
+        pid: Pid,
+        name: &str,
+        priority: Priority,
+        stack_size: usize,
+        entry_point: u64,
+    ) -> Result<thread::Tid, &'static str> {
+        // Verify process exists
+        {
+            let processes = self.processes.read();
+            if !processes.contains_key(&pid) {
+                return Err("Process not found");
+            }
+        }
+
+        // Create the thread
+        let thread_manager = thread::get_thread_manager();
+        let tid = thread_manager.create_user_thread(pid, name, priority, stack_size, entry_point)?;
+
+        // If this is the first thread for the process, mark it as main thread
+        {
+            let mut processes = self.processes.write();
+            if let Some(pcb) = processes.get_mut(&pid) {
+                if pcb.main_thread.is_none() {
+                    pcb.main_thread = Some(tid);
+                }
+            }
+        }
+
+        Ok(tid)
+    }
+
+    /// Get all threads for a process
+    pub fn get_process_threads(&self, pid: Pid) -> Vec<thread::Tid> {
+        let thread_manager = thread::get_thread_manager();
+        thread_manager.get_process_threads(pid)
+    }
+
+    /// Terminate all threads for a process
+    pub fn terminate_process_threads(&self, pid: Pid) -> Result<(), &'static str> {
+        let thread_manager = thread::get_thread_manager();
+        let threads = thread_manager.get_process_threads(pid);
+
+        for tid in threads {
+            thread_manager.terminate_thread(tid, -1)?;
+        }
+
+        Ok(())
+    }
+
+    /// Create a pipe for a process
+    pub fn create_pipe(&self) -> Result<(u32, u32), &'static str> {
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.create_pipe()
+    }
+
+    /// Create shared memory segment
+    pub fn create_shared_memory(
+        &self,
+        size: usize,
+        permissions: ipc::SharedMemoryPermissions,
+    ) -> Result<ipc::IpcId, &'static str> {
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.create_shared_memory(size, permissions)
+    }
+
+    /// Send signal to process
+    pub fn send_signal(
+        &self,
+        target_pid: Pid,
+        signal: ipc::Signal,
+        sender_pid: Pid,
+    ) -> Result<(), &'static str> {
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.send_signal(target_pid, signal, sender_pid)
+    }
+
+    /// Set signal handler for process
+    pub fn set_signal_handler(
+        &self,
+        pid: Pid,
+        signal: ipc::Signal,
+        disposition: ipc::SignalDisposition,
+    ) -> Result<(), &'static str> {
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.set_signal_handler(pid, signal, disposition)
+    }
+
+    /// Get pending signals for process
+    pub fn get_pending_signals(&self, pid: Pid) -> Vec<ipc::SignalInfo> {
+        let ipc_manager = ipc::get_ipc_manager();
+        ipc_manager.get_pending_signals(pid)
+    }
 }
 
 /// Global process manager instance
@@ -488,6 +600,12 @@ pub fn get_process_manager() -> &'static ProcessManager {
 pub fn init() -> Result<(), &'static str> {
     // Initialize core process management
     PROCESS_MANAGER.init()?;
+
+    // Initialize thread management
+    thread::init()?;
+
+    // Initialize IPC system
+    ipc::init()?;
 
     // Initialize integration with other kernel systems
     integration::init()?;
@@ -509,3 +627,20 @@ pub fn tick_system_time() {
 }
 
 use core::sync::atomic::AtomicU64;
+
+/// Get the current process ID
+pub fn current_pid() -> Pid {
+    // TODO: Get from actual scheduler context when available
+    // For now, return PID 1 as a fallback
+    1
+}
+
+/// Terminate the current process
+pub fn terminate_current_process() {
+    let process_manager = get_process_manager();
+    let pid = current_pid();
+    let _ = process_manager.terminate_process(pid, 0);
+}
+
+/// Re-export send_signal from IPC module for convenience
+pub use ipc::send_signal;

@@ -576,71 +576,22 @@ impl PciConfigManager {
         Ok(())
     }
 
-    /// Print detailed device configuration
+    /// Production device configuration - silent validation only
     pub fn print_device_config(&self, device: &PciDevice) {
-        crate::println!("PCI Device Configuration: {}", device.location());
-        crate::println!("  Vendor: 0x{:04x} ({})", device.vendor_id, crate::pci::database::get_vendor_name(device.vendor_id));
-        crate::println!("  Device: 0x{:04x} ({})", device.device_id, crate::pci::database::get_device_name(device.vendor_id, device.device_id));
-        crate::println!("  Class: {} (0x{:02x}:0x{:02x})", device.class_code, device.class_code as u8, device.subclass);
-        crate::println!("  Revision: 0x{:02x}", device.revision_id);
-        crate::println!("  Header Type: 0x{:02x} ({})", device.header_type,
-                        if device.is_multifunction() { "Multifunction" } else { "Single Function" });
-
+        // Production: only report critical configuration problems
         let command = self.get_command(device);
         let status = self.get_status(device);
-
-        crate::println!("  Command: 0x{:04x}", command);
-        crate::println!("    I/O Space: {}", if (command & PCI_COMMAND_IO) != 0 { "Enabled" } else { "Disabled" });
-        crate::println!("    Memory Space: {}", if (command & PCI_COMMAND_MEMORY) != 0 { "Enabled" } else { "Disabled" });
-        crate::println!("    Bus Master: {}", if (command & PCI_COMMAND_MASTER) != 0 { "Enabled" } else { "Disabled" });
-
-        crate::println!("  Status: 0x{:04x}", status);
-        crate::println!("    Capabilities: {}", if (status & PCI_STATUS_CAP_LIST) != 0 { "Present" } else { "None" });
-
-        // Print BARs
-        let bars = self.read_bars(device);
-        crate::println!("  Base Address Registers:");
-        for (i, bar) in bars.iter().enumerate() {
-            if bar.is_active() {
-                crate::println!("    BAR{}: {}", i, bar);
-            }
+        
+        // Report critical errors only
+        if (status & 0xF900) != 0 { // Error bits
+            crate::println!("PCI {} error: status 0x{:04x}", device.location(), status);
         }
 
-        // Print capabilities
-        if device.capabilities.msi || device.capabilities.msi_x || device.capabilities.power_management {
-            crate::println!("  Capabilities:");
-
-            if device.capabilities.power_management {
-                if let Some(power_state) = self.get_power_state(device) {
-                    crate::println!("    Power Management: {}", power_state);
-                }
-            }
-
-            if device.capabilities.msi {
-                if let Some(msi) = self.read_msi_capability(device) {
-                    crate::println!("    MSI: {} (Messages: {})",
-                                   if msi.enabled { "Enabled" } else { "Disabled" },
-                                   1 << msi.multiple_message_enable);
-                }
-            }
-
-            if device.capabilities.msi_x {
-                if let Some(msi_x) = self.read_msi_x_capability(device) {
-                    crate::println!("    MSI-X: {} (Table Size: {})",
-                                   if msi_x.enabled { "Enabled" } else { "Disabled" },
-                                   msi_x.table_size);
-                }
-            }
-
-            if device.capabilities.pci_express {
-                crate::println!("    PCI Express: Present");
-            }
-        }
-
-        let irq_line = self.get_interrupt_line(device);
-        let irq_pin = self.get_interrupt_pin(device);
-        if irq_pin != 0 {
-            crate::println!("  Interrupt: Line {} Pin {}", irq_line, irq_pin);
+        // Report if critical device is disabled
+        let class_val = device.class_code as u8;
+        if (class_val == 0x03 || class_val == 0x02) && // VGA or Network
+           (command & (PCI_COMMAND_IO | PCI_COMMAND_MEMORY)) == 0 {
+            crate::println!("Critical device {} disabled", device.location());
         }
     }
 }

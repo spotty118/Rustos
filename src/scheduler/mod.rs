@@ -12,7 +12,6 @@ use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
 use x86_64::VirtAddr;
-use crate::println;
 
 /// Process ID type
 pub type Pid = u32;
@@ -329,7 +328,6 @@ impl GlobalScheduler {
         }
 
         self.process_count.fetch_add(1, Ordering::SeqCst);
-        println!("Created process {} '{}' with priority {:?} on CPU {}", pid, name, priority, cpu_id);
 
         Ok(pid)
     }
@@ -509,8 +507,7 @@ lazy_static! {
         } else {
             1 // Single CPU fallback
         };
-        
-        println!("Initializing scheduler for {} CPU(s)", num_cpus);
+
         GlobalScheduler::new(num_cpus)
     };
 }
@@ -522,8 +519,7 @@ pub fn init() -> Result<(), &'static str> {
     
     // Create init process (PID 1)
     GLOBAL_SCHEDULER.create_process(None, Priority::High, "init")?;
-    
-    println!("✓ Scheduler initialized with {} CPU(s)", GLOBAL_SCHEDULER.cpu_schedulers.len());
+
     Ok(())
 }
 
@@ -556,7 +552,7 @@ fn get_current_cpu_id() -> CpuId {
 
 /// Get system time in microseconds (production implementation)
 fn get_system_time() -> u64 {
-    crate::time::current_time_ms() * 1000 // Convert ms to microseconds
+    crate::time::uptime_us()
 }
 
 /// Context switch between processes (stub implementation)
@@ -568,4 +564,11 @@ pub unsafe extern "C" fn context_switch(old_state: *mut CpuState, new_state: *co
         // This is not a real context switch but allows compilation
         core::ptr::copy_nonoverlapping(new_state, old_state, 1);
     }
+}
+
+/// Yield CPU time to allow other processes to run
+pub fn yield_cpu() {
+    // In a real implementation, this would trigger a context switch
+    // For now, we'll just do a no-op to allow compilation
+    // The actual scheduler would handle preempting the current process
 }

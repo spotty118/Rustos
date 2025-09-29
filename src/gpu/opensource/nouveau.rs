@@ -4,7 +4,8 @@
 //! for NVIDIA graphics cards, supporting multiple GPU generations.
 
 use alloc::vec::Vec;
-use alloc::string::String;
+use alloc::vec;
+use alloc::string::{String, ToString};
 
 /// Nouveau driver context for NVIDIA GPUs
 #[derive(Debug)]

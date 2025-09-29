@@ -3,8 +3,8 @@
 //! This module provides DNS client functionality for domain name resolution
 //! in the RustOS network stack, supporting various record types and query operations.
 
-use crate::vec;
-use crate::{BTreeMap, String, Vec};
+use alloc::vec;
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 // use alloc::string::ToString; // Unused
 use core::fmt;
 

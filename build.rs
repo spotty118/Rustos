@@ -1,9 +1,8 @@
 fn main() {
-    // Simplified build script - just set up rerun triggers
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/main.rs");
-    println!("cargo:rerun-if-changed=src/lib.rs");
-    
-    // For now, skip the complex bootloader creation to get basic compilation working
-    // This can be re-enabled once the kernel compiles successfully
+    // Enable link-time optimization for release builds
+    #[cfg(not(debug_assertions))]
+    println!("cargo:rustc-link-arg=-flto");
+
+    // Add the linker script for the target
+    println!("cargo:rustc-link-arg=--gc-sections");
 }

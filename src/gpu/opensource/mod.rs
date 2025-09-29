@@ -8,8 +8,10 @@
 //! - Mesa3D integration preparation
 
 use alloc::vec::Vec;
+use alloc::vec;
 use alloc::string::{String, ToString};
 use alloc::collections::BTreeMap;
+use alloc::format;
 use spin::Mutex;
 use lazy_static::lazy_static;
 
@@ -151,7 +153,7 @@ pub struct OpensourceDriverRegistry {
 }
 
 /// Loaded driver instance
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoadedDriver {
     pub gpu_id: u32,
     pub driver_type: DriverType,
@@ -210,7 +212,7 @@ pub struct ThermalLimits {
 }
 
 /// Driver power management interface
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DriverPowerManagement {
     pub current_mode: PowerMode,
     pub available_modes: Vec<PowerMode>,

@@ -11,8 +11,9 @@
 use spin::Mutex;
 use lazy_static::lazy_static;
 use alloc::vec::Vec;
+use alloc::vec;
 use alloc::string::{String, ToString};
-use alloc::collections::BTreeMap;
+use alloc::format;
 use core::fmt;
 
 pub mod memory;
@@ -1119,47 +1120,51 @@ impl GPUSystem {
 
     /// Update performance monitoring data
     pub fn update_performance_stats(&mut self) {
-        if let Some(active_gpu) = self.get_active_gpu() {
-            // Simulate realistic performance data based on GPU tier
-            let base_utilization = match active_gpu.tier {
-                GPUTier::Entry => 15,
-                GPUTier::Budget => 25,
-                GPUTier::Mainstream => 35,
-                GPUTier::Performance => 45,
-                GPUTier::HighEnd => 55,
-                GPUTier::Enthusiast => 65,
-            };
+        let (gpu_tier, base_clock, boost_clock, memory_clock) = if let Some(active_gpu) = self.get_active_gpu() {
+            (active_gpu.tier, active_gpu.base_clock, active_gpu.boost_clock, active_gpu.memory_clock)
+        } else {
+            return;
+        };
 
-            // Add some variation to make it realistic
-            let variation = (core::ptr::addr_of!(self.status) as usize % 20) as u8;
-            self.performance_stats.utilization_percentage = (base_utilization + variation).min(100);
+        // Simulate realistic performance data based on GPU tier
+        let base_utilization = match gpu_tier {
+            GPUTier::Entry => 15,
+            GPUTier::Budget => 25,
+            GPUTier::Mainstream => 35,
+            GPUTier::Performance => 45,
+            GPUTier::HighEnd => 55,
+            GPUTier::Enthusiast => 65,
+        };
 
-            // Update temperature based on utilization
-            self.performance_stats.temperature_celsius = 30 + (self.performance_stats.utilization_percentage / 2);
+        // Add some variation to make it realistic
+        let variation = (core::ptr::addr_of!(self.status) as usize % 20) as u8;
+        self.performance_stats.utilization_percentage = (base_utilization + variation).min(100);
 
-            // Update fan speed based on temperature
-            self.performance_stats.fan_speed_percentage = if self.performance_stats.temperature_celsius > 70 {
-                ((self.performance_stats.temperature_celsius - 30) * 2).min(100)
-            } else {
-                30
-            };
+        // Update temperature based on utilization
+        self.performance_stats.temperature_celsius = 30 + (self.performance_stats.utilization_percentage / 2);
 
-            // Update power consumption
-            self.performance_stats.power_consumption_watts = match active_gpu.tier {
-                GPUTier::Entry => 15 + (self.performance_stats.utilization_percentage as u16 / 4),
-                GPUTier::Budget => 50 + (self.performance_stats.utilization_percentage as u16 / 2),
-                GPUTier::Mainstream => 120 + self.performance_stats.utilization_percentage as u16,
-                GPUTier::Performance => 180 + (self.performance_stats.utilization_percentage as u16 * 3 / 2),
-                GPUTier::HighEnd => 250 + (self.performance_stats.utilization_percentage as u16 * 2),
-                GPUTier::Enthusiast => 350 + (self.performance_stats.utilization_percentage as u16 * 3),
-            };
+        // Update fan speed based on temperature
+        self.performance_stats.fan_speed_percentage = if self.performance_stats.temperature_celsius > 70 {
+            ((self.performance_stats.temperature_celsius - 30) * 2).min(100)
+        } else {
+            30
+        };
 
-            // Update clock speeds (simplified simulation)
-            self.performance_stats.clock_speeds.core_clock_mhz =
-                active_gpu.base_clock + (active_gpu.boost_clock - active_gpu.base_clock) * self.performance_stats.utilization_percentage as u32 / 100;
-            self.performance_stats.clock_speeds.memory_clock_mhz = active_gpu.memory_clock;
-            self.performance_stats.clock_speeds.shader_clock_mhz = self.performance_stats.clock_speeds.core_clock_mhz;
-        }
+        // Update power consumption
+        self.performance_stats.power_consumption_watts = match gpu_tier {
+            GPUTier::Entry => 15 + (self.performance_stats.utilization_percentage as u16 / 4),
+            GPUTier::Budget => 50 + (self.performance_stats.utilization_percentage as u16 / 2),
+            GPUTier::Mainstream => 120 + self.performance_stats.utilization_percentage as u16,
+            GPUTier::Performance => 180 + (self.performance_stats.utilization_percentage as u16 * 3 / 2),
+            GPUTier::HighEnd => 250 + (self.performance_stats.utilization_percentage as u16 * 2),
+            GPUTier::Enthusiast => 350 + (self.performance_stats.utilization_percentage as u16 * 3),
+        };
+
+        // Update clock speeds (simplified simulation)
+        self.performance_stats.clock_speeds.core_clock_mhz =
+            base_clock + (boost_clock - base_clock) * self.performance_stats.utilization_percentage as u32 / 100;
+        self.performance_stats.clock_speeds.memory_clock_mhz = memory_clock;
+        self.performance_stats.clock_speeds.shader_clock_mhz = self.performance_stats.clock_speeds.core_clock_mhz;
     }
 
     /// Set GPU power state

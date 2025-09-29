@@ -4,7 +4,9 @@
 //! for modern AMD graphics cards (GCN and RDNA architectures).
 
 use alloc::vec::Vec;
-use alloc::string::String;
+use alloc::vec;
+use alloc::string::{String, ToString};
+use alloc::format;
 
 /// AMDGPU driver context for AMD GPUs
 #[derive(Debug)]
