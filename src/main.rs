@@ -19,6 +19,10 @@ mod boot_display;
 mod keyboard;
 // Include desktop environment
 mod simple_desktop;
+// Include graphics system
+mod graphics;
+// Include advanced desktop environment  
+mod desktop;
 
 // VGA_WRITER is now used via macros in print module
 
@@ -75,11 +79,82 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     boot_display::show_boot_progress(4, 4, "Launching Desktop Environment");
     boot_display::boot_delay();
 
-    // Initialize and start the desktop environment
-    simple_desktop::init_desktop();
+    println!("🚀 RustOS Desktop Selection");
+    println!("Current kernel can boot to either:");
+    println!("1. Simple Text Desktop (MS-DOS style) - Old Implementation");  
+    println!("2. Modern Graphics Desktop (Current style) - New Implementation");
+    println!();
+    
+    // For demonstration, let's try to initialize graphics but fall back gracefully
+    let graphics_initialized = {
+        println!("Attempting to initialize modern graphics desktop...");
+        
+        // Use a safe memory area that won't cause crashes
+        let graphics_buffer_addr = 0xC0000; // Safe area in upper memory
+        let width = 640;   
+        let height = 480;
+        
+        println!("Setting up {}x{} framebuffer at 0x{:x}", width, height, graphics_buffer_addr);
+        
+        // Create framebuffer info for our graphics system  
+        let fb_info = graphics::FramebufferInfo::new(
+            width,
+            height,
+            graphics::PixelFormat::RGBA8888, // 32-bit color
+            graphics_buffer_addr,
+            false, // No GPU acceleration for now
+        );
+        
+        // Try to initialize graphics
+        match graphics::init(fb_info, false) {
+            Ok(()) => {
+                println!("✅ Graphics system initialized successfully!");
+                println!("🖥️  Modern Desktop Environment Ready");
+                true
+            }
+            Err(e) => {
+                println!("❌ Failed to initialize graphics: {}", e);
+                println!("⬇️  Falling back to simple desktop");
+                false
+            }
+        }
+    };
 
-    // Main desktop loop with keyboard integration
-    desktop_main_loop()
+    println!();
+    if graphics_initialized {
+        println!("🎨 Launching MODERN DESKTOP ENVIRONMENT");
+        println!("   Features:");
+        println!("   • Modern gradient backgrounds");
+        println!("   • Overlapping windows with shadows");
+        println!("   • Glass-effect taskbar and dock");
+        println!("   • Contemporary color scheme");
+        println!("   • Hardware-accelerated graphics");
+        println!();
+        
+        // Initialize modern desktop environment
+        match desktop::setup_full_desktop() {
+            Ok(()) => {
+                println!("✅ Modern desktop initialized successfully!");
+                modern_desktop_main_loop()
+            }
+            Err(e) => {
+                println!("❌ Desktop initialization failed: {}", e);
+                println!("⬇️  Falling back to simple desktop");
+                simple_desktop::init_desktop();
+                desktop_main_loop()
+            }
+        }
+    } else {
+        println!("📺 Launching SIMPLE TEXT DESKTOP (MS-DOS Style)");
+        println!("   Features:");
+        println!("   • Text-based interface");
+        println!("   • 80x25 character display");
+        println!("   • Basic window simulation");
+        println!("   • VGA text mode");
+        println!();
+        simple_desktop::init_desktop();
+        desktop_main_loop()
+    }
 }
 
 /// Main desktop loop that handles keyboard input and desktop updates
@@ -125,6 +200,65 @@ fn desktop_main_loop() -> ! {
             simple_desktop::with_desktop(|desktop| {
                 desktop.update();
             });
+        }
+
+        update_counter += 1;
+
+        // Halt CPU until next interrupt to save power
+        unsafe { core::arch::asm!("hlt"); }
+    }
+}
+
+/// Modern desktop loop that handles graphics-based desktop
+fn modern_desktop_main_loop() -> ! {
+    let mut update_counter: u64 = 0;
+    let mut _frame_counter: usize = 0;
+
+    loop {
+        // Process keyboard events and forward to desktop
+        while let Some(key_event) = keyboard::get_key_event() {
+            match key_event {
+                keyboard::KeyEvent::CharacterPress(c) => {
+                    desktop::handle_key_down(c as u8);
+                }
+                keyboard::KeyEvent::SpecialPress(special_key) => {
+                    // Map special keys to desktop key codes
+                    let key_code = match special_key {
+                        keyboard::SpecialKey::Escape => 27, // ESC
+                        keyboard::SpecialKey::Enter => 13,  // Enter
+                        keyboard::SpecialKey::Backspace => 8, // Backspace
+                        keyboard::SpecialKey::Tab => 9,     // Tab
+                        keyboard::SpecialKey::F1 => 112,   // F1
+                        keyboard::SpecialKey::F2 => 113,   // F2
+                        keyboard::SpecialKey::F3 => 114,   // F3
+                        keyboard::SpecialKey::F4 => 115,   // F4
+                        keyboard::SpecialKey::F5 => 116,   // F5
+                        _ => continue, // Ignore other special keys for now
+                    };
+                    
+                    desktop::handle_key_down(key_code);
+                }
+                _ => {
+                    // Ignore key releases for now
+                }
+            }
+        }
+
+        // Update desktop periodically
+        if update_counter.is_multiple_of(100_000) {
+            desktop::update_desktop();
+        }
+
+        // Render desktop periodically
+        if update_counter.is_multiple_of(200_000) {
+            desktop::render_desktop();
+            _frame_counter += 1;
+        }
+
+        // Check if desktop needs redraw
+        if desktop::desktop_needs_redraw() {
+            desktop::render_desktop();
+            _frame_counter += 1;
         }
 
         update_counter += 1;
