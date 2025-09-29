@@ -349,15 +349,10 @@ impl ArpTable {
             .collect();
 
         for ip in expired_ips {
-            if let Some(entry) = entries.remove(&ip) {
-                stats.total_entries -= 1;
-                if entry.is_static {
-                    stats.static_entries -= 1;
-                }
-            }
+            entries.remove(&ip);
         }
 
-        // Update state statistics
+        // Recalculate all statistics after removing expired entries
         self.update_state_stats(&entries, &mut stats);
     }
 
@@ -423,11 +418,11 @@ impl ArpTable {
             .map(|(k, v)| (*k, v.clone()))
             .collect();
 
-        let removed_count = entries.len() - static_entries.len();
         entries.clear();
         *entries = static_entries;
 
-        stats.total_entries -= removed_count;
+        // Recalculate all statistics after clearing entries
+        self.update_state_stats(&entries, &mut stats);
     }
 
     /// Check if MAC address is from a trusted vendor

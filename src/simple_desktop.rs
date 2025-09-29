@@ -5,6 +5,8 @@
 use crate::vga_buffer::{Color, VGA_WRITER};
 use crate::print;
 use heapless::String;
+use lazy_static::lazy_static;
+use spin::Mutex;
 
 const SCREEN_WIDTH: usize = 80;
 const SCREEN_HEIGHT: usize = 25;
@@ -467,22 +469,30 @@ impl Desktop {
     }
 }
 
-/// Global desktop instance
-static mut DESKTOP: Option<Desktop> = None;
+// Global desktop instance
+lazy_static! {
+    static ref DESKTOP: Mutex<Option<Desktop>> = Mutex::new(None);
+}
 
 /// Initialize the desktop
 pub fn init_desktop() {
-    unsafe {
-        DESKTOP = Some(Desktop::new());
-        if let Some(ref mut desktop) = DESKTOP {
-            desktop.init();
-        }
-    }
+    let mut desktop_lock = DESKTOP.lock();
+    let mut desktop = Desktop::new();
+    desktop.init();
+    *desktop_lock = Some(desktop);
 }
 
-/// Get desktop reference
-pub fn get_desktop() -> Option<&'static mut Desktop> {
-    unsafe { DESKTOP.as_mut() }
+/// Get desktop reference safely
+pub fn with_desktop<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut Desktop) -> R,
+{
+    let mut desktop_lock = DESKTOP.lock();
+    if let Some(ref mut desktop) = *desktop_lock {
+        Some(f(desktop))
+    } else {
+        None
+    }
 }
 
 /// Main desktop loop
@@ -490,13 +500,13 @@ pub fn run_desktop() -> ! {
     init_desktop();
 
     loop {
-        if let Some(desktop) = get_desktop() {
+        with_desktop(|desktop| {
             desktop.update();
+        });
 
-            // Simulate some keyboard input for demo
-            // In a real OS, this would read from keyboard interrupt
-            // For now, just update the display periodically
-        }
+        // Simulate some keyboard input for demo
+        // In a real OS, this would read from keyboard interrupt
+        // For now, just update the display periodically
 
         // Halt CPU until next interrupt
         unsafe { core::arch::asm!("hlt"); }

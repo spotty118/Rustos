@@ -917,6 +917,7 @@ impl PerformanceProfiler {
             PerformanceCounter::NetworkPacketsReceived => Some(16),
             PerformanceCounter::PowerConsumption => Some(17),
             PerformanceCounter::Temperature => Some(18),
+            // Index 19 reserved for future counter types
         }
     }
 }
