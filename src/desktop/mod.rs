@@ -75,17 +75,30 @@ impl Desktop {
     pub fn init(&mut self) -> Result<(), &'static str> {
         self.status = DesktopStatus::Initializing;
 
-        // Initialize framebuffer
+        // Clear screen with background color
         framebuffer::clear_screen(self.config.background_color);
 
-        // Initialize window manager
-        self.window_manager = Some(WindowManager::new(
-            self.config.preferred_width as usize,
-            self.config.preferred_height as usize,
-        ));
+        // Get actual screen dimensions from graphics system
+        let (width, height) = if let Some((w, h)) = crate::graphics::get_screen_dimensions() {
+            (w, h)
+        } else {
+            // Fall back to configured dimensions
+            (self.config.preferred_width as usize, self.config.preferred_height as usize)
+        };
+
+        // Initialize window manager with actual screen size
+        self.window_manager = Some(WindowManager::new(width, height));
 
         if self.config.show_splash {
             self.show_splash_screen();
+        }
+
+        // Create some demo windows to show modern desktop
+        if let Some(ref mut wm) = self.window_manager {
+            wm.create_window("Welcome to RustOS", 50, 50, 400, 300);
+            wm.create_window("File Manager", 150, 150, 350, 250);
+            wm.create_window("System Info", 250, 250, 300, 200);
+            wm.force_redraw();
         }
 
         self.status = DesktopStatus::Running;
@@ -94,8 +107,14 @@ impl Desktop {
 
     /// Show startup splash screen
     fn show_splash_screen(&self) {
-        let center_x = self.config.preferred_width as usize / 2;
-        let center_y = self.config.preferred_height as usize / 2;
+        let (width, height) = if let Some((w, h)) = crate::graphics::get_screen_dimensions() {
+            (w, h)
+        } else {
+            (self.config.preferred_width as usize, self.config.preferred_height as usize)
+        };
+        
+        let center_x = width / 2;
+        let center_y = height / 2;
 
         let logo_rect = Rect::new(
             center_x.saturating_sub(200),
@@ -104,8 +123,9 @@ impl Desktop {
             200,
         );
 
-        framebuffer::fill_rect(logo_rect, Color::rgb(40, 40, 40));
-        framebuffer::draw_rect(logo_rect, Color::rgb(70, 130, 180), 4);
+        // Modern gradient-style splash screen
+        framebuffer::fill_rect(logo_rect, Color::rgb(45, 52, 73));
+        framebuffer::draw_rect(logo_rect, Color::rgb(100, 160, 220), 3);
 
         let inner_rect = Rect::new(
             logo_rect.x + 20,
@@ -113,7 +133,17 @@ impl Desktop {
             logo_rect.width - 40,
             logo_rect.height - 40,
         );
-        framebuffer::draw_rect(inner_rect, Color::rgb(100, 160, 200), 2);
+        framebuffer::fill_rect(inner_rect, Color::rgb(65, 75, 100));
+        framebuffer::draw_rect(inner_rect, Color::rgb(120, 180, 240), 2);
+        
+        // Add a title bar effect
+        let title_rect = Rect::new(
+            logo_rect.x,
+            logo_rect.y,
+            logo_rect.width,
+            30,
+        );
+        framebuffer::fill_rect(title_rect, Color::rgb(80, 120, 180));
     }
 
     /// Get framebuffer info

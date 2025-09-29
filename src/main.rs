@@ -19,6 +19,10 @@ mod boot_display;
 mod keyboard;
 // Include desktop environment
 mod simple_desktop;
+// Include graphics system
+mod graphics;
+// Include advanced desktop environment  
+mod desktop;
 
 // VGA_WRITER is now used via macros in print module
 
@@ -75,11 +79,57 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     boot_display::show_boot_progress(4, 4, "Launching Desktop Environment");
     boot_display::boot_delay();
 
-    // Initialize and start the desktop environment
-    simple_desktop::init_desktop();
+    // Try to initialize graphics system from VGA for now (bootloader 0.9 doesn't have framebuffer)
+    // Create a fake framebuffer using VGA memory space
+    let graphics_initialized = {
+        println!("No framebuffer available from bootloader 0.9, using VGA fallback");
+        
+        // VGA text mode buffer at 0xB8000 - we'll use part of extended memory for graphics
+        let graphics_buffer_addr = 0xA0000; // VGA graphics mode memory
+        let width = 320;
+        let height = 200;
+        
+        // Create framebuffer info for our graphics system
+        let fb_info = graphics::FramebufferInfo::new(
+            width,
+            height,
+            graphics::PixelFormat::RGB565, // Use 16-bit for VGA compatibility
+            graphics_buffer_addr,
+            false, // No GPU acceleration for now
+        );
+        
+        // Try to initialize graphics
+        match graphics::init(fb_info, false) {
+            Ok(()) => {
+                println!("Graphics system initialized with VGA fallback!");
+                true
+            }
+            Err(e) => {
+                println!("Failed to initialize graphics: {}", e);
+                false
+            }
+        }
+    };
 
-    // Main desktop loop with keyboard integration
-    desktop_main_loop()
+    if graphics_initialized {
+        // Initialize modern desktop environment
+        match desktop::setup_full_desktop() {
+            Ok(()) => {
+                println!("Modern desktop initialized!");
+                modern_desktop_main_loop()
+            }
+            Err(e) => {
+                println!("Failed to initialize desktop: {}, falling back to simple desktop", e);
+                simple_desktop::init_desktop();
+                desktop_main_loop()
+            }
+        }
+    } else {
+        // Fall back to simple text-based desktop
+        println!("Falling back to simple desktop");
+        simple_desktop::init_desktop();
+        desktop_main_loop()
+    }
 }
 
 /// Main desktop loop that handles keyboard input and desktop updates
@@ -125,6 +175,65 @@ fn desktop_main_loop() -> ! {
             simple_desktop::with_desktop(|desktop| {
                 desktop.update();
             });
+        }
+
+        update_counter += 1;
+
+        // Halt CPU until next interrupt to save power
+        unsafe { core::arch::asm!("hlt"); }
+    }
+}
+
+/// Modern desktop loop that handles graphics-based desktop
+fn modern_desktop_main_loop() -> ! {
+    let mut update_counter: u64 = 0;
+    let mut _frame_counter: usize = 0;
+
+    loop {
+        // Process keyboard events and forward to desktop
+        while let Some(key_event) = keyboard::get_key_event() {
+            match key_event {
+                keyboard::KeyEvent::CharacterPress(c) => {
+                    desktop::handle_key_down(c as u8);
+                }
+                keyboard::KeyEvent::SpecialPress(special_key) => {
+                    // Map special keys to desktop key codes
+                    let key_code = match special_key {
+                        keyboard::SpecialKey::Escape => 27, // ESC
+                        keyboard::SpecialKey::Enter => 13,  // Enter
+                        keyboard::SpecialKey::Backspace => 8, // Backspace
+                        keyboard::SpecialKey::Tab => 9,     // Tab
+                        keyboard::SpecialKey::F1 => 112,   // F1
+                        keyboard::SpecialKey::F2 => 113,   // F2
+                        keyboard::SpecialKey::F3 => 114,   // F3
+                        keyboard::SpecialKey::F4 => 115,   // F4
+                        keyboard::SpecialKey::F5 => 116,   // F5
+                        _ => continue, // Ignore other special keys for now
+                    };
+                    
+                    desktop::handle_key_down(key_code);
+                }
+                _ => {
+                    // Ignore key releases for now
+                }
+            }
+        }
+
+        // Update desktop periodically
+        if update_counter.is_multiple_of(100_000) {
+            desktop::update_desktop();
+        }
+
+        // Render desktop periodically
+        if update_counter.is_multiple_of(200_000) {
+            desktop::render_desktop();
+            _frame_counter += 1;
+        }
+
+        // Check if desktop needs redraw
+        if desktop::desktop_needs_redraw() {
+            desktop::render_desktop();
+            _frame_counter += 1;
         }
 
         update_counter += 1;
