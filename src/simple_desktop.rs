@@ -469,7 +469,7 @@ impl Desktop {
     }
 }
 
-/// Global desktop instance
+// Global desktop instance
 lazy_static! {
     static ref DESKTOP: Mutex<Option<Desktop>> = Mutex::new(None);
 }
@@ -500,13 +500,13 @@ pub fn run_desktop() -> ! {
     init_desktop();
 
     loop {
-        if let Some(desktop) = get_desktop() {
+        with_desktop(|desktop| {
             desktop.update();
+        });
 
-            // Simulate some keyboard input for demo
-            // In a real OS, this would read from keyboard interrupt
-            // For now, just update the display periodically
-        }
+        // Simulate some keyboard input for demo
+        // In a real OS, this would read from keyboard interrupt
+        // For now, just update the display periodically
 
         // Halt CPU until next interrupt
         unsafe { core::arch::asm!("hlt"); }

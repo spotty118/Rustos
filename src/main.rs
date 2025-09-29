@@ -150,9 +150,9 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(location) = info.location() {
         println!("at {}:{}:{}", location.file(), location.line(), location.column());
     }
-    if let Some(message) = info.payload().downcast_ref::<&str>() {
-        println!("Reason: {}", message);
-    }
+    // Note: PanicInfo::payload() is deprecated and doesn't provide useful information
+    // The panic message is typically provided via the formatting arguments which are 
+    // not directly accessible from PanicInfo in no_std environments
     println!("System halted.");
 
     loop {

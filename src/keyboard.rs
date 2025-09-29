@@ -475,25 +475,8 @@ pub fn process_scancode(scancode: u8) -> Result<(), &'static str> {
     let mut handler = KEYBOARD_HANDLER.lock();
     handler.process_scancode(scancode)?;
 
-    // Desktop integration is optional - will be enabled when desktop module is included
-    #[cfg(feature = "desktop")]
-    {
-        // If desktop is available, forward key events to it
-        if let Some(event) = handler.get_key_event() {
-            // Forward to desktop environment if available
-            if crate::desktop::get_desktop_status() == crate::desktop::DesktopStatus::Running {
-                match event {
-                    KeyEvent::CharacterPress(c) => {
-                        crate::desktop::handle_key_down(c as u8);
-                    }
-                    KeyEvent::SpecialPress(special_key) => {
-                        crate::desktop::handle_key_down(special_key as u8);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
+    // Desktop integration would go here when fully implemented
+    // Currently handled in main.rs event loop
 
     Ok(())
 }
