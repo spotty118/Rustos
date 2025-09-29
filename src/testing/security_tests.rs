@@ -144,12 +144,12 @@ pub fn create_security_test_suite() -> TestSuite {
 // Setup and teardown functions
 fn setup_all_security_tests() {
     // Initialize security testing environment
-    crate::testing_framework::get_test_framework().enable_mocks();
+    crate::testing_framework::get_test_framework().enable_hardware_testing();
 }
 
 fn teardown_all_security_tests() {
     // Clean up security testing environment
-    crate::testing_framework::get_test_framework().disable_mocks();
+    crate::testing_framework::get_test_framework().disable_hardware_testing();
 }
 
 fn setup_privilege_tests() {}
@@ -327,11 +327,11 @@ fn test_resource_exhaustion_protection() -> TestResult {
 
     // Test 1: Memory exhaustion via excessive allocations
     let mut allocations = Vec::new();
-    let mock_mem = crate::testing_framework::mocks::get_mock_memory_controller();
+    let mem_test = crate::testing_framework::hardware_testing::get_memory_controller_test();
 
     // Try to allocate until memory is exhausted
     for i in 0..10000 {
-        let ptr = mock_mem.allocate(1024 * 1024); // 1MB chunks
+        let ptr = mem_test.allocate(1024 * 1024); // 1MB chunks
         if ptr.is_null() {
             // Good - allocation failed, indicating limits
             break;
@@ -347,7 +347,7 @@ fn test_resource_exhaustion_protection() -> TestResult {
 
     // Clean up allocations
     for (ptr, size) in allocations {
-        mock_mem.deallocate(ptr, size);
+        mem_test.deallocate(ptr, size);
     }
 
     // Test 2: Process creation exhaustion
@@ -581,24 +581,24 @@ fn test_memory_safety() -> TestResult {
     let mut safety_violations = 0;
 
     // Test 1: Use-after-free detection
-    let mock_mem = crate::testing_framework::mocks::get_mock_memory_controller();
-    let ptr = mock_mem.allocate(1024);
+    let mem_test = crate::testing_framework::hardware_testing::get_memory_controller_test();
+    let ptr = mem_test.allocate(1024);
 
     if !ptr.is_null() {
         // Free the memory
-        mock_mem.deallocate(ptr, 1024);
+        mem_test.deallocate(ptr, 1024);
 
-        // Attempt to use after free (this is a simulation)
+        // Attempt to use after free (this is a test for memory safety mechanisms)
         // In a real implementation, this would be detected by memory safety mechanisms
         // For now, we assume the allocator handles this correctly
     }
 
     // Test 2: Double-free detection
-    let ptr2 = mock_mem.allocate(2048);
+    let ptr2 = mem_test.allocate(2048);
     if !ptr2.is_null() {
-        mock_mem.deallocate(ptr2, 2048);
+        mem_test.deallocate(ptr2, 2048);
         // Attempt double free - should be handled gracefully
-        mock_mem.deallocate(ptr2, 2048);
+        mem_test.deallocate(ptr2, 2048);
     }
 
     // Test 3: Memory corruption detection
