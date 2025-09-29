@@ -8,7 +8,7 @@
 //! - Support for special keys (arrows, function keys, etc.)
 
 use core::fmt;
-use heapless::spsc::{Consumer, Producer, Queue};
+use heapless::spsc::Queue;
 use lazy_static::lazy_static;
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, KeyCode, ScancodeSet1};
 use spin::Mutex;
@@ -16,6 +16,11 @@ use x86_64::instructions::port::Port;
 
 /// Maximum number of key events in the buffer
 const KEY_BUFFER_SIZE: usize = 64;
+
+// Global key event queue - properly synchronized
+lazy_static! {
+    static ref KEY_EVENT_QUEUE: Mutex<Queue<KeyEvent, KEY_BUFFER_SIZE>> = Mutex::new(Queue::new());
+}
 
 /// Keyboard scan codes for special keys
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,23 +230,15 @@ pub struct KeyboardHandler {
     pc_keyboard: Keyboard<layouts::Us104Key, ScancodeSet1>,
     modifiers: ModifierState,
     stats: KeyboardStats,
-    producer: Producer<'static, KeyEvent, KEY_BUFFER_SIZE>,
-    consumer: Consumer<'static, KeyEvent, KEY_BUFFER_SIZE>,
 }
 
 impl KeyboardHandler {
     /// Create a new keyboard handler
     fn new() -> Self {
-        // Create a static queue for the key events
-        static mut QUEUE: Queue<KeyEvent, KEY_BUFFER_SIZE> = Queue::new();
-        let (producer, consumer) = unsafe { QUEUE.split() };
-
         Self {
             pc_keyboard: Keyboard::new(layouts::Us104Key, ScancodeSet1, HandleControl::Ignore),
             modifiers: ModifierState::default(),
             stats: KeyboardStats::default(),
-            producer,
-            consumer,
         }
     }
 
@@ -381,8 +378,9 @@ impl KeyboardHandler {
         // Update modifier state
         self.modifiers.update(event);
 
-        // Try to add to buffer
-        match self.producer.enqueue(event) {
+        // Try to add to global buffer
+        let mut queue = KEY_EVENT_QUEUE.lock();
+        match queue.enqueue(event) {
             Ok(()) => Ok(()),
             Err(_) => {
                 self.stats.buffer_overflows += 1;
@@ -393,12 +391,14 @@ impl KeyboardHandler {
 
     /// Get the next key event from the buffer
     pub fn get_key_event(&mut self) -> Option<KeyEvent> {
-        self.consumer.dequeue()
+        let mut queue = KEY_EVENT_QUEUE.lock();
+        queue.dequeue()
     }
 
     /// Check if there are pending key events
     pub fn has_key_events(&self) -> bool {
-        !self.consumer.peek().is_none()
+        let queue = KEY_EVENT_QUEUE.lock();
+        queue.peek().is_some()
     }
 
     /// Get current modifier state
@@ -413,7 +413,8 @@ impl KeyboardHandler {
 
     /// Clear the key event buffer
     pub fn clear_buffer(&mut self) {
-        while self.consumer.dequeue().is_some() {}
+        let mut queue = KEY_EVENT_QUEUE.lock();
+        while queue.dequeue().is_some() {}
     }
 
     /// Read a character (blocking)

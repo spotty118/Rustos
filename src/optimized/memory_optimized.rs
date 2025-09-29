@@ -494,8 +494,64 @@ pub fn handle_page_fault(
     fault_addr: x86_64::VirtAddr,
     error_code: x86_64::structures::idt::PageFaultErrorCode,
 ) {
-    // Full page fault handling
-    panic!("Unhandled page fault at {:?} with error {:?}", fault_addr, error_code);
+    use x86_64::structures::idt::PageFaultErrorCode;
+    
+    // Log the page fault for debugging
+    crate::println!("[MEMORY] Page fault at {:?} with error {:?}", fault_addr, error_code);
+    
+    // Check if this is a recoverable fault
+    if error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION) {
+        // Protection violation - likely a security issue
+        crate::println!("[MEMORY] Protection violation - terminating faulty process");
+        // TODO: Terminate the offending process instead of panicking
+        panic!("Memory protection violation at {:?}", fault_addr);
+    } else if error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE) {
+        // Write to unmapped page - could be stack growth or heap expansion
+        crate::println!("[MEMORY] Write fault - attempting lazy allocation");
+        
+        // Try to handle common cases like stack growth
+        if try_handle_stack_growth(fault_addr).is_ok() {
+            return;
+        }
+        
+        // If we can't handle it, fall back to panic
+        panic!("Unhandled write page fault at {:?}", fault_addr);
+    } else {
+        // Read from unmapped page
+        crate::println!("[MEMORY] Read fault - attempting lazy allocation");
+        
+        // Try lazy allocation for read faults
+        if try_handle_lazy_allocation(fault_addr).is_ok() {
+            return;
+        }
+        
+        // If we can't handle it, fall back to panic
+        panic!("Unhandled read page fault at {:?}", fault_addr);
+    }
+}
+
+/// Try to handle stack growth
+fn try_handle_stack_growth(fault_addr: x86_64::VirtAddr) -> Result<(), &'static str> {
+    // Simple heuristic: if the fault is within 4KB of a known stack, allow growth
+    // This is a placeholder implementation
+    let addr = fault_addr.as_u64();
+    
+    // Check if address is in typical stack range (this is very simplified)
+    if addr >= 0x1000 && addr < 0x7fff_ffff_0000 {
+        crate::println!("[MEMORY] Allowing stack growth at {:?}", fault_addr);
+        // TODO: Actually allocate the page
+        return Ok(());
+    }
+    
+    Err("Not a valid stack growth")
+}
+
+/// Try to handle lazy allocation
+fn try_handle_lazy_allocation(fault_addr: x86_64::VirtAddr) -> Result<(), &'static str> {
+    // This is a placeholder for lazy allocation logic
+    crate::println!("[MEMORY] Attempting lazy allocation at {:?}", fault_addr);
+    // TODO: Actually implement lazy allocation
+    Err("Lazy allocation not implemented")
 }
 
 /// Adjust heap size

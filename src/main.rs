@@ -91,9 +91,9 @@ fn desktop_main_loop() -> ! {
         while let Some(key_event) = keyboard::get_key_event() {
             match key_event {
                 keyboard::KeyEvent::CharacterPress(c) => {
-                    if let Some(desktop) = simple_desktop::get_desktop() {
+                    simple_desktop::with_desktop(|desktop| {
                         desktop.handle_key(c as u8);
-                    }
+                    });
                 }
                 keyboard::KeyEvent::SpecialPress(special_key) => {
                     // Map special keys to desktop key codes
@@ -110,9 +110,9 @@ fn desktop_main_loop() -> ! {
                         _ => continue, // Ignore other special keys for now
                     };
 
-                    if let Some(desktop) = simple_desktop::get_desktop() {
+                    simple_desktop::with_desktop(|desktop| {
                         desktop.handle_key(key_code);
-                    }
+                    });
                 }
                 _ => {
                     // Ignore key releases for now
@@ -121,10 +121,10 @@ fn desktop_main_loop() -> ! {
         }
 
         // Update desktop periodically (for clock and animations)
-        if update_counter % 1_000_000 == 0 {
-            if let Some(desktop) = simple_desktop::get_desktop() {
+        if update_counter.is_multiple_of(1_000_000) {
+            simple_desktop::with_desktop(|desktop| {
                 desktop.update();
-            }
+            });
         }
 
         update_counter += 1;

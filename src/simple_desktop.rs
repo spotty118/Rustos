@@ -5,6 +5,8 @@
 use crate::vga_buffer::{Color, VGA_WRITER};
 use crate::print;
 use heapless::String;
+use lazy_static::lazy_static;
+use spin::Mutex;
 
 const SCREEN_WIDTH: usize = 80;
 const SCREEN_HEIGHT: usize = 25;
@@ -468,21 +470,29 @@ impl Desktop {
 }
 
 /// Global desktop instance
-static mut DESKTOP: Option<Desktop> = None;
+lazy_static! {
+    static ref DESKTOP: Mutex<Option<Desktop>> = Mutex::new(None);
+}
 
 /// Initialize the desktop
 pub fn init_desktop() {
-    unsafe {
-        DESKTOP = Some(Desktop::new());
-        if let Some(ref mut desktop) = DESKTOP {
-            desktop.init();
-        }
-    }
+    let mut desktop_lock = DESKTOP.lock();
+    let mut desktop = Desktop::new();
+    desktop.init();
+    *desktop_lock = Some(desktop);
 }
 
-/// Get desktop reference
-pub fn get_desktop() -> Option<&'static mut Desktop> {
-    unsafe { DESKTOP.as_mut() }
+/// Get desktop reference safely
+pub fn with_desktop<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut Desktop) -> R,
+{
+    let mut desktop_lock = DESKTOP.lock();
+    if let Some(ref mut desktop) = *desktop_lock {
+        Some(f(desktop))
+    } else {
+        None
+    }
 }
 
 /// Main desktop loop

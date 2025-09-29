@@ -488,6 +488,32 @@ impl NetworkPacketProcessor {
 
     /// Queue packet for transmission
     pub fn queue_for_transmission(&self, packet: NetworkPacket) -> Result<(), NetworkPacket> {
+        // Validate packet before queuing
+        if packet.length == 0 {
+            crate::println!("[NETWORK] Rejecting packet with zero length");
+            return Err(packet);
+        }
+        
+        if packet.length > 1536 {
+            crate::println!("[NETWORK] Rejecting oversized packet: {} bytes (max 1536)", packet.length);
+            return Err(packet);
+        }
+        
+        // Additional validation: ensure length doesn't exceed actual data buffer
+        if packet.length > packet.data.len() {
+            crate::println!("[NETWORK] Rejecting packet with length {} exceeding buffer size {}", 
+                packet.length, packet.data.len());
+            return Err(packet);
+        }
+        
+        // Check for basic packet sanity
+        match packet.packet_type {
+            PacketType::Ethernet | PacketType::Ip | 
+            PacketType::Tcp | PacketType::Udp | PacketType::Icmp => {
+                // Valid packet types
+            }
+        }
+        
         self.transmit_ring.push(packet)
     }
 }

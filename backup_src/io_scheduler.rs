@@ -536,29 +536,34 @@ impl IOQueue {
         let mut best_index = None;
         let mut best_distance = u64::MAX;
 
-        unsafe {
-            for (index, request) in self.requests.iter().enumerate() {
-                if request.status == IORequestStatus::Queued {
-                    let distance = (request.sector_start as i64 - current_head_position as i64).abs() as u64;
+        // Prevent infinite recursion by trying both directions in a loop
+        for _attempt in 0..2 {
+            unsafe {
+                for (index, request) in self.requests.iter().enumerate() {
+                    if request.status == IORequestStatus::Queued {
+                        let distance = (request.sector_start as i64 - current_head_position as i64).abs() as u64;
 
-                    if SCAN_DIRECTION_UP && request.sector_start >= current_head_position {
-                        if distance < best_distance {
-                            best_distance = distance;
-                            best_index = Some(index);
-                        }
-                    } else if !SCAN_DIRECTION_UP && request.sector_start <= current_head_position {
-                        if distance < best_distance {
-                            best_distance = distance;
-                            best_index = Some(index);
+                        if SCAN_DIRECTION_UP && request.sector_start >= current_head_position {
+                            if distance < best_distance {
+                                best_distance = distance;
+                                best_index = Some(index);
+                            }
+                        } else if !SCAN_DIRECTION_UP && request.sector_start <= current_head_position {
+                            if distance < best_distance {
+                                best_distance = distance;
+                                best_index = Some(index);
+                            }
                         }
                     }
                 }
-            }
 
-            // If no request found in current direction, change direction
-            if best_index.is_none() {
+                if best_index.is_some() {
+                    break;
+                }
+
+                // Switch direction and try again
                 SCAN_DIRECTION_UP = !SCAN_DIRECTION_UP;
-                return self.scan_schedule(current_head_position);
+                best_distance = u64::MAX;
             }
         }
 
@@ -572,26 +577,32 @@ impl IOQueue {
         let mut best_index = None;
         let mut best_sector = if unsafe { LOOK_DIRECTION_UP } { u64::MAX } else { 0 };
 
-        unsafe {
-            for (index, request) in self.requests.iter().enumerate() {
-                if request.status == IORequestStatus::Queued {
-                    if LOOK_DIRECTION_UP && request.sector_start >= current_head_position {
-                        if request.sector_start < best_sector {
-                            best_sector = request.sector_start;
-                            best_index = Some(index);
-                        }
-                    } else if !LOOK_DIRECTION_UP && request.sector_start <= current_head_position {
-                        if request.sector_start > best_sector {
-                            best_sector = request.sector_start;
-                            best_index = Some(index);
+        // Prevent infinite recursion by trying both directions in a loop
+        for _attempt in 0..2 {
+            unsafe {
+                for (index, request) in self.requests.iter().enumerate() {
+                    if request.status == IORequestStatus::Queued {
+                        if LOOK_DIRECTION_UP && request.sector_start >= current_head_position {
+                            if request.sector_start < best_sector {
+                                best_sector = request.sector_start;
+                                best_index = Some(index);
+                            }
+                        } else if !LOOK_DIRECTION_UP && request.sector_start <= current_head_position {
+                            if request.sector_start > best_sector {
+                                best_sector = request.sector_start;
+                                best_index = Some(index);
+                            }
                         }
                     }
                 }
-            }
 
-            if best_index.is_none() {
+                if best_index.is_some() {
+                    break;
+                }
+
+                // Switch direction and try again
                 LOOK_DIRECTION_UP = !LOOK_DIRECTION_UP;
-                return self.look_schedule(current_head_position);
+                best_sector = if LOOK_DIRECTION_UP { u64::MAX } else { 0 };
             }
         }
 
