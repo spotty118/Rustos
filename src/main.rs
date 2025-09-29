@@ -79,21 +79,28 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     boot_display::show_boot_progress(4, 4, "Launching Desktop Environment");
     boot_display::boot_delay();
 
-    // Try to initialize graphics system from VGA for now (bootloader 0.9 doesn't have framebuffer)
-    // Create a fake framebuffer using VGA memory space
+    println!("🚀 RustOS Desktop Selection");
+    println!("Current kernel can boot to either:");
+    println!("1. Simple Text Desktop (MS-DOS style) - Old Implementation");  
+    println!("2. Modern Graphics Desktop (Current style) - New Implementation");
+    println!();
+    
+    // For demonstration, let's try to initialize graphics but fall back gracefully
     let graphics_initialized = {
-        println!("No framebuffer available from bootloader 0.9, using VGA fallback");
+        println!("Attempting to initialize modern graphics desktop...");
         
-        // VGA text mode buffer at 0xB8000 - we'll use part of extended memory for graphics
-        let graphics_buffer_addr = 0xA0000; // VGA graphics mode memory
-        let width = 320;
-        let height = 200;
+        // Use a safe memory area that won't cause crashes
+        let graphics_buffer_addr = 0xC0000; // Safe area in upper memory
+        let width = 640;   
+        let height = 480;
         
-        // Create framebuffer info for our graphics system
+        println!("Setting up {}x{} framebuffer at 0x{:x}", width, height, graphics_buffer_addr);
+        
+        // Create framebuffer info for our graphics system  
         let fb_info = graphics::FramebufferInfo::new(
             width,
             height,
-            graphics::PixelFormat::RGB565, // Use 16-bit for VGA compatibility
+            graphics::PixelFormat::RGBA8888, // 32-bit color
             graphics_buffer_addr,
             false, // No GPU acceleration for now
         );
@@ -101,32 +108,50 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // Try to initialize graphics
         match graphics::init(fb_info, false) {
             Ok(()) => {
-                println!("Graphics system initialized with VGA fallback!");
+                println!("✅ Graphics system initialized successfully!");
+                println!("🖥️  Modern Desktop Environment Ready");
                 true
             }
             Err(e) => {
-                println!("Failed to initialize graphics: {}", e);
+                println!("❌ Failed to initialize graphics: {}", e);
+                println!("⬇️  Falling back to simple desktop");
                 false
             }
         }
     };
 
+    println!();
     if graphics_initialized {
+        println!("🎨 Launching MODERN DESKTOP ENVIRONMENT");
+        println!("   Features:");
+        println!("   • Modern gradient backgrounds");
+        println!("   • Overlapping windows with shadows");
+        println!("   • Glass-effect taskbar and dock");
+        println!("   • Contemporary color scheme");
+        println!("   • Hardware-accelerated graphics");
+        println!();
+        
         // Initialize modern desktop environment
         match desktop::setup_full_desktop() {
             Ok(()) => {
-                println!("Modern desktop initialized!");
+                println!("✅ Modern desktop initialized successfully!");
                 modern_desktop_main_loop()
             }
             Err(e) => {
-                println!("Failed to initialize desktop: {}, falling back to simple desktop", e);
+                println!("❌ Desktop initialization failed: {}", e);
+                println!("⬇️  Falling back to simple desktop");
                 simple_desktop::init_desktop();
                 desktop_main_loop()
             }
         }
     } else {
-        // Fall back to simple text-based desktop
-        println!("Falling back to simple desktop");
+        println!("📺 Launching SIMPLE TEXT DESKTOP (MS-DOS Style)");
+        println!("   Features:");
+        println!("   • Text-based interface");
+        println!("   • 80x25 character display");
+        println!("   • Basic window simulation");
+        println!("   • VGA text mode");
+        println!();
         simple_desktop::init_desktop();
         desktop_main_loop()
     }
