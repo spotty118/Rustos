@@ -1,66 +1,6 @@
 #![no_std]
 #![no_main]
 
-extern crate alloc;
-
-use core::panic::PanicInfo;
-use bootloader::{BootInfo, entry_point};
-
-// Include compiler intrinsics for missing symbols
-mod intrinsics;
-
-// Include VGA buffer module for better output
-mod vga_buffer;
-// Include print module for print! and println! macros
-mod print;
-
-// Include minimal required kernel modules
-mod serial;
-mod error;
-mod arch;
-mod data_structures;
-mod performance;
-mod gdt;
-mod interrupts;
-mod acpi;
-mod apic;
-mod pci;
-mod memory;
-mod process;
-mod time;
-mod net;
-mod drivers;
-mod syscall;
-mod graphics;
-
-// Print macros
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ($crate::print::_print(format_args!($($arg)*)));
-}
-
-#[macro_export]
-macro_rules! println {
-    () => ($crate::print!("\n"));
-    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-}
-
-#[macro_export]
-macro_rules! serial_print {
-    ($($arg:tt)*) => {
-        $crate::serial::_print(format_args!($($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! serial_println {
-    () => ($crate::serial_print!("\n"));
-    ($($arg:tt)*) => ($crate::serial_print!("{}\n", format_args!($($arg)*)));
-}
-
-#![no_std]
-#![no_main]
-
 use core::panic::PanicInfo;
 use bootloader::{BootInfo, entry_point};
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
