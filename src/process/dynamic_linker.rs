@@ -76,8 +76,14 @@ pub struct DynamicInfo {
     /// String table address (DT_STRTAB)
     pub strtab: Option<VirtAddr>,
     
+    /// String table size (DT_STRSZ)
+    pub strsz: Option<usize>,
+    
     /// Symbol table address (DT_SYMTAB)
     pub symtab: Option<VirtAddr>,
+    
+    /// Symbol table entry size (DT_SYMENT)
+    pub syment: Option<usize>,
     
     /// Hash table address (DT_HASH)
     pub hash: Option<VirtAddr>,
@@ -87,6 +93,9 @@ pub struct DynamicInfo {
     
     /// Size of relocation table (DT_RELASZ)
     pub relasz: Option<usize>,
+    
+    /// Relocation entry size (DT_RELAENT)
+    pub relaent: Option<usize>,
     
     /// PLT relocations address (DT_JMPREL)
     pub jmprel: Option<VirtAddr>,
@@ -115,6 +124,51 @@ pub struct Relocation {
     
     /// Addend value
     pub addend: i64,
+}
+
+/// ELF symbol table entry (Elf64_Sym)
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Elf64Symbol {
+    pub st_name: u32,      // Symbol name (string table index)
+    pub st_info: u8,       // Symbol type and binding
+    pub st_other: u8,      // Symbol visibility
+    pub st_shndx: u16,     // Section index
+    pub st_value: u64,     // Symbol value
+    pub st_size: u64,      // Symbol size
+}
+
+impl Elf64Symbol {
+    /// Get symbol binding (upper 4 bits of st_info)
+    pub fn binding(&self) -> u8 {
+        self.st_info >> 4
+    }
+    
+    /// Get symbol type (lower 4 bits of st_info)
+    pub fn symbol_type(&self) -> u8 {
+        self.st_info & 0xf
+    }
+    
+    /// Check if symbol is defined (not undefined)
+    pub fn is_defined(&self) -> bool {
+        self.st_shndx != 0  // SHN_UNDEF
+    }
+}
+
+/// Symbol binding types
+pub mod symbol_binding {
+    pub const STB_LOCAL: u8 = 0;   // Local symbol
+    pub const STB_GLOBAL: u8 = 1;  // Global symbol
+    pub const STB_WEAK: u8 = 2;    // Weak symbol
+}
+
+/// Symbol types
+pub mod symbol_type {
+    pub const STT_NOTYPE: u8 = 0;  // No type
+    pub const STT_OBJECT: u8 = 1;  // Data object
+    pub const STT_FUNC: u8 = 2;    // Code object (function)
+    pub const STT_SECTION: u8 = 3; // Section
+    pub const STT_FILE: u8 = 4;    // File name
 }
 
 /// Dynamic section entry (Elf64_Dyn)
@@ -330,8 +384,14 @@ impl DynamicLinker {
             dynamic_tags::DT_STRTAB => {
                 info.strtab = Some(VirtAddr::new(entry.d_val));
             }
+            dynamic_tags::DT_STRSZ => {
+                info.strsz = Some(entry.d_val as usize);
+            }
             dynamic_tags::DT_SYMTAB => {
                 info.symtab = Some(VirtAddr::new(entry.d_val));
+            }
+            dynamic_tags::DT_SYMENT => {
+                info.syment = Some(entry.d_val as usize);
             }
             dynamic_tags::DT_HASH => {
                 info.hash = Some(VirtAddr::new(entry.d_val));
@@ -341,6 +401,9 @@ impl DynamicLinker {
             }
             dynamic_tags::DT_RELASZ => {
                 info.relasz = Some(entry.d_val as usize);
+            }
+            dynamic_tags::DT_RELAENT => {
+                info.relaent = Some(entry.d_val as usize);
             }
             dynamic_tags::DT_JMPREL => {
                 info.jmprel = Some(VirtAddr::new(entry.d_val));
@@ -419,18 +482,42 @@ impl DynamicLinker {
                     // No relocation needed
                 }
                 relocation_types::R_X86_64_RELATIVE => {
-                    // Adjust by program base address
+                    // Adjust by program base address: B + A
                     let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
                     let value = base_address.as_u64() + reloc.addend as u64;
                     
-                    // TODO: Write value to target address
-                    // This requires memory write capabilities
-                    // unsafe { *(target.as_u64() as *mut u64) = value; }
+                    unsafe {
+                        self.write_relocation_value(target, value)?;
+                    }
                 }
-                relocation_types::R_X86_64_GLOB_DAT |
+                relocation_types::R_X86_64_GLOB_DAT => {
+                    // Symbol value: S
+                    // Need to look up symbol by index and write its address
+                    let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
+                    
+                    // TODO: Look up symbol value from symbol table using reloc.symbol index
+                    // For now, we'll skip this as it requires symbol table indexing
+                    // In a full implementation:
+                    // let symbol_value = self.lookup_symbol_by_index(reloc.symbol)?;
+                    // unsafe { self.write_relocation_value(target, symbol_value)?; }
+                }
                 relocation_types::R_X86_64_JUMP_SLOT => {
-                    // Symbol resolution required
-                    // TODO: Look up symbol and write address
+                    // PLT entry: S
+                    // Similar to GLOB_DAT but for PLT
+                    let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
+                    
+                    // TODO: Look up symbol and write to PLT slot
+                    // For lazy binding, we could write the address of the resolver stub
+                    // For now, skip until we have full symbol resolution
+                }
+                relocation_types::R_X86_64_64 => {
+                    // Direct 64-bit: S + A
+                    let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
+                    
+                    // TODO: Look up symbol value and add addend
+                    // let symbol_value = self.lookup_symbol_by_index(reloc.symbol)?;
+                    // let value = symbol_value + reloc.addend as u64;
+                    // unsafe { self.write_relocation_value(target, value)?; }
                 }
                 _ => {
                     // Unsupported relocation type
@@ -450,6 +537,253 @@ impl DynamicLinker {
     /// Check if a library is loaded
     pub fn is_loaded(&self, name: &str) -> bool {
         self.loaded_libraries.contains_key(name)
+    }
+    
+    /// Parse string table and resolve library names
+    pub fn resolve_library_names(
+        &self,
+        binary_data: &[u8],
+        dynamic_info: &mut DynamicInfo,
+    ) -> DynamicLinkerResult<()> {
+        // Check if we have string table information
+        let strtab_addr = dynamic_info.strtab
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table")))?;
+        let strtab_size = dynamic_info.strsz
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table size")))?;
+        
+        // In a real implementation, strtab_addr would be a virtual address
+        // For now, we'll treat it as an offset into the binary
+        let strtab_offset = strtab_addr.as_u64() as usize;
+        
+        if strtab_offset + strtab_size > binary_data.len() {
+            return Err(DynamicLinkerError::InvalidElf(
+                String::from("String table out of bounds")
+            ));
+        }
+        
+        let strtab = &binary_data[strtab_offset..strtab_offset + strtab_size];
+        
+        // Resolve library names from offsets
+        let mut resolved_names = Vec::new();
+        for name_ref in &dynamic_info.needed {
+            if name_ref.starts_with("offset:") {
+                let offset_str = &name_ref[7..];
+                if let Ok(offset) = offset_str.parse::<usize>() {
+                    if let Some(name) = self.read_string_from_table(strtab, offset) {
+                        resolved_names.push(name);
+                    }
+                }
+            } else {
+                // Already resolved
+                resolved_names.push(name_ref.clone());
+            }
+        }
+        
+        dynamic_info.needed = resolved_names;
+        Ok(())
+    }
+    
+    /// Read a null-terminated string from the string table
+    fn read_string_from_table(&self, strtab: &[u8], offset: usize) -> Option<String> {
+        if offset >= strtab.len() {
+            return None;
+        }
+        
+        let mut end = offset;
+        while end < strtab.len() && strtab[end] != 0 {
+            end += 1;
+        }
+        
+        if end > offset {
+            String::from_utf8(strtab[offset..end].to_vec()).ok()
+        } else {
+            None
+        }
+    }
+    
+    /// Parse symbol table from ELF binary
+    pub fn parse_symbol_table(
+        &self,
+        binary_data: &[u8],
+        dynamic_info: &DynamicInfo,
+    ) -> DynamicLinkerResult<Vec<(String, VirtAddr, Elf64Symbol)>> {
+        let symtab_addr = dynamic_info.symtab
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No symbol table")))?;
+        let strtab_addr = dynamic_info.strtab
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table")))?;
+        let strtab_size = dynamic_info.strsz
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table size")))?;
+        
+        // Calculate symbol table bounds
+        // We'll use hash table to determine the number of symbols if available
+        let symtab_offset = symtab_addr.as_u64() as usize;
+        let strtab_offset = strtab_addr.as_u64() as usize;
+        
+        if strtab_offset + strtab_size > binary_data.len() {
+            return Err(DynamicLinkerError::InvalidElf(
+                String::from("String table out of bounds")
+            ));
+        }
+        
+        let strtab = &binary_data[strtab_offset..strtab_offset + strtab_size];
+        
+        // Calculate number of symbols
+        // Symbol table ends where string table begins (common layout)
+        let sym_count = if strtab_offset > symtab_offset {
+            (strtab_offset - symtab_offset) / core::mem::size_of::<Elf64Symbol>()
+        } else {
+            // Fallback: parse until we run out of data or hit invalid entries
+            100 // Conservative estimate
+        };
+        
+        let mut symbols = Vec::new();
+        
+        for i in 0..sym_count {
+            let sym_offset = symtab_offset + i * core::mem::size_of::<Elf64Symbol>();
+            
+            if sym_offset + core::mem::size_of::<Elf64Symbol>() > binary_data.len() {
+                break;
+            }
+            
+            // Parse symbol entry
+            let symbol = unsafe {
+                core::ptr::read(binary_data[sym_offset..].as_ptr() as *const Elf64Symbol)
+            };
+            
+            // Skip undefined symbols
+            if !symbol.is_defined() {
+                continue;
+            }
+            
+            // Read symbol name from string table
+            if let Some(name) = self.read_string_from_table(strtab, symbol.st_name as usize) {
+                if !name.is_empty() {
+                    symbols.push((name, VirtAddr::new(symbol.st_value), symbol));
+                }
+            }
+        }
+        
+        Ok(symbols)
+    }
+    
+    /// Load symbols into global symbol table
+    pub fn load_symbols_from_binary(
+        &mut self,
+        binary_data: &[u8],
+        dynamic_info: &DynamicInfo,
+        base_address: VirtAddr,
+    ) -> DynamicLinkerResult<usize> {
+        let symbols = self.parse_symbol_table(binary_data, dynamic_info)?;
+        let count = symbols.len();
+        
+        for (name, value, symbol) in symbols {
+            // Adjust symbol value by base address if needed
+            let adjusted_addr = if symbol.symbol_type() == symbol_type::STT_FUNC ||
+                                   symbol.symbol_type() == symbol_type::STT_OBJECT {
+                VirtAddr::new(base_address.as_u64() + value.as_u64())
+            } else {
+                value
+            };
+            
+            self.add_symbol(name, adjusted_addr);
+        }
+        
+        Ok(count)
+    }
+    
+    /// Parse relocations from RELA section
+    pub fn parse_relocations(
+        &self,
+        binary_data: &[u8],
+        dynamic_info: &DynamicInfo,
+    ) -> DynamicLinkerResult<Vec<Relocation>> {
+        let mut relocations = Vec::new();
+        
+        // Parse regular relocations (DT_RELA)
+        if let (Some(rela_addr), Some(rela_size)) = (dynamic_info.rela, dynamic_info.relasz) {
+            let rela_offset = rela_addr.as_u64() as usize;
+            let reloc_entry_size = dynamic_info.relaent.unwrap_or(24); // Standard RELA entry size
+            let reloc_count = rela_size / reloc_entry_size;
+            
+            for i in 0..reloc_count {
+                let offset = rela_offset + i * reloc_entry_size;
+                if let Some(reloc) = self.parse_single_relocation(binary_data, offset)? {
+                    relocations.push(reloc);
+                }
+            }
+        }
+        
+        // Parse PLT relocations (DT_JMPREL)
+        if let (Some(jmprel_addr), Some(jmprel_size)) = (dynamic_info.jmprel, dynamic_info.pltrelsz) {
+            let jmprel_offset = jmprel_addr.as_u64() as usize;
+            let reloc_entry_size = 24; // RELA entry size
+            let reloc_count = jmprel_size / reloc_entry_size;
+            
+            for i in 0..reloc_count {
+                let offset = jmprel_offset + i * reloc_entry_size;
+                if let Some(reloc) = self.parse_single_relocation(binary_data, offset)? {
+                    relocations.push(reloc);
+                }
+            }
+        }
+        
+        Ok(relocations)
+    }
+    
+    /// Parse a single relocation entry
+    fn parse_single_relocation(
+        &self,
+        binary_data: &[u8],
+        offset: usize,
+    ) -> DynamicLinkerResult<Option<Relocation>> {
+        const RELA_ENTRY_SIZE: usize = 24; // r_offset (8) + r_info (8) + r_addend (8)
+        
+        if offset + RELA_ENTRY_SIZE > binary_data.len() {
+            return Ok(None);
+        }
+        
+        let data = &binary_data[offset..offset + RELA_ENTRY_SIZE];
+        
+        // Parse r_offset
+        let r_offset = u64::from_le_bytes([
+            data[0], data[1], data[2], data[3],
+            data[4], data[5], data[6], data[7],
+        ]);
+        
+        // Parse r_info
+        let r_info = u64::from_le_bytes([
+            data[8], data[9], data[10], data[11],
+            data[12], data[13], data[14], data[15],
+        ]);
+        
+        // Parse r_addend
+        let r_addend = i64::from_le_bytes([
+            data[16], data[17], data[18], data[19],
+            data[20], data[21], data[22], data[23],
+        ]);
+        
+        // Extract symbol and type from r_info
+        let r_type = (r_info & 0xffffffff) as u32;
+        let r_sym = (r_info >> 32) as u32;
+        
+        Ok(Some(Relocation {
+            offset: VirtAddr::new(r_offset),
+            r_type,
+            symbol: r_sym,
+            addend: r_addend,
+        }))
+    }
+    
+    /// Write value to memory (helper for relocations)
+    /// 
+    /// # Safety
+    /// This function writes to arbitrary memory addresses.
+    /// Caller must ensure the address is valid and writable.
+    unsafe fn write_relocation_value(&self, addr: VirtAddr, value: u64) -> DynamicLinkerResult<()> {
+        // In a real kernel, we would check permissions first
+        let ptr = addr.as_u64() as *mut u64;
+        core::ptr::write_volatile(ptr, value);
+        Ok(())
     }
 }
 
@@ -485,5 +819,39 @@ mod tests {
         
         assert_eq!(linker.resolve_symbol("test_symbol"), Some(addr));
         assert_eq!(linker.resolve_symbol("nonexistent"), None);
+    }
+    
+    #[test]
+    fn test_string_table_reading() {
+        let linker = DynamicLinker::new();
+        let strtab = b"\x00hello\x00world\x00test\x00";
+        
+        assert_eq!(linker.read_string_from_table(strtab, 1), Some(String::from("hello")));
+        assert_eq!(linker.read_string_from_table(strtab, 7), Some(String::from("world")));
+        assert_eq!(linker.read_string_from_table(strtab, 13), Some(String::from("test")));
+        assert_eq!(linker.read_string_from_table(strtab, 0), None); // Empty string
+    }
+    
+    #[test]
+    fn test_elf_symbol_binding() {
+        let symbol = Elf64Symbol {
+            st_name: 0,
+            st_info: (symbol_binding::STB_GLOBAL << 4) | symbol_type::STT_FUNC,
+            st_other: 0,
+            st_shndx: 1,
+            st_value: 0x1000,
+            st_size: 100,
+        };
+        
+        assert_eq!(symbol.binding(), symbol_binding::STB_GLOBAL);
+        assert_eq!(symbol.symbol_type(), symbol_type::STT_FUNC);
+        assert!(symbol.is_defined());
+    }
+    
+    #[test]
+    fn test_library_loaded_check() {
+        let linker = DynamicLinker::new();
+        assert!(!linker.is_loaded("libc.so.6"));
+        assert_eq!(linker.loaded_libraries().len(), 0);
     }
 }
