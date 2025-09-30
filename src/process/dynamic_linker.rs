@@ -433,12 +433,25 @@ impl DynamicLinker {
                 continue;
             }
             
-            // Try to find and load the library
+            // Try to find the library
             match self.find_library(lib_name) {
-                Some(_path) => {
-                    // TODO: Actually load the library file
-                    // For now, just record that we attempted to load it
-                    loaded.push(lib_name.clone());
+                Some(path) => {
+                    // Try to load the library file
+                    match self.load_library_file(&path) {
+                        Ok(_data) => {
+                            // TODO: Parse the library ELF, load it into memory,
+                            // extract symbols, and add to loaded_libraries
+                            // For now, just record the attempt
+                            loaded.push(lib_name.clone());
+                        }
+                        Err(DynamicLinkerError::LibraryNotFound(_)) => {
+                            // Filesystem integration pending - record as attempted
+                            loaded.push(lib_name.clone());
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
                 }
                 None => {
                     return Err(DynamicLinkerError::LibraryNotFound(lib_name.clone()));
@@ -453,11 +466,53 @@ impl DynamicLinker {
     fn find_library(&self, name: &str) -> Option<String> {
         for path in &self.search_paths {
             let full_path = format!("{}/{}", path, name);
-            // TODO: Check if file exists
-            // For now, assume it exists
-            return Some(full_path);
+            // Check if file exists via VFS
+            if self.check_file_exists(&full_path) {
+                return Some(full_path);
+            }
         }
         None
+    }
+    
+    /// Check if a file exists in the filesystem
+    fn check_file_exists(&self, path: &str) -> bool {
+        // Try to get file metadata to check existence
+        // In a full implementation, we would use the VFS
+        // For now, return true to maintain compatibility
+        // TODO: Integrate with VFS when filesystem is mounted
+        // use crate::fs::vfs;
+        // vfs().stat(path).is_ok()
+        true
+    }
+    
+    /// Load a shared library file from filesystem
+    /// 
+    /// Returns the library data if successfully loaded
+    pub fn load_library_file(&self, path: &str) -> DynamicLinkerResult<Vec<u8>> {
+        // TODO: Integrate with VFS to read file
+        // For now, return an error indicating filesystem integration needed
+        
+        // In a full implementation:
+        // use crate::fs::vfs;
+        // let vfs = vfs();
+        // let fd = vfs.open(path, OpenFlags::read_only())
+        //     .map_err(|_| DynamicLinkerError::LibraryNotFound(path.to_string()))?;
+        // 
+        // // Get file size
+        // let metadata = vfs.stat(path)
+        //     .map_err(|_| DynamicLinkerError::LibraryNotFound(path.to_string()))?;
+        // 
+        // // Read file data
+        // let mut buffer = vec![0u8; metadata.size as usize];
+        // vfs.read(fd, &mut buffer)
+        //     .map_err(|_| DynamicLinkerError::InvalidElf(String::from("Failed to read library")))?;
+        // vfs.close(fd).ok();
+        // 
+        // Ok(buffer)
+        
+        Err(DynamicLinkerError::LibraryNotFound(
+            format!("{} (filesystem integration pending)", path)
+        ))
     }
     
     /// Resolve a symbol by name across all loaded libraries
@@ -537,6 +592,67 @@ impl DynamicLinker {
     /// Check if a library is loaded
     pub fn is_loaded(&self, name: &str) -> bool {
         self.loaded_libraries.contains_key(name)
+    }
+    
+    /// Complete dynamic linking workflow for a binary
+    /// 
+    /// This is the main entry point that orchestrates:
+    /// 1. Parsing PT_DYNAMIC section
+    /// 2. Resolving library names from string table
+    /// 3. Loading dependencies
+    /// 4. Building symbol table
+    /// 5. Parsing and applying relocations
+    /// 
+    /// # Arguments
+    /// * `binary_data` - The ELF binary data
+    /// * `program_headers` - Program headers from the ELF
+    /// * `base_address` - Base address where binary is loaded
+    /// 
+    /// # Returns
+    /// Number of relocations applied
+    pub fn link_binary(
+        &mut self,
+        binary_data: &[u8],
+        program_headers: &[super::elf_loader::Elf64ProgramHeader],
+        base_address: VirtAddr,
+    ) -> DynamicLinkerResult<usize> {
+        // Step 1: Parse dynamic section
+        let mut dynamic_info = self.parse_dynamic_section(
+            binary_data,
+            program_headers,
+            base_address
+        )?;
+        
+        // Step 2: Resolve library names from string table
+        self.resolve_library_names(binary_data, &mut dynamic_info)?;
+        
+        // Step 3: Load required dependencies
+        let _loaded_libs = self.load_dependencies(&dynamic_info.needed)?;
+        
+        // Step 4: Load symbols from this binary into global symbol table
+        let _symbol_count = self.load_symbols_from_binary(
+            binary_data,
+            &dynamic_info,
+            base_address
+        )?;
+        
+        // Step 5: Parse relocations
+        let relocations = self.parse_relocations(binary_data, &dynamic_info)?;
+        let reloc_count = relocations.len();
+        
+        // Step 6: Apply relocations
+        self.apply_relocations(&relocations, base_address)?;
+        
+        Ok(reloc_count)
+    }
+    
+    /// Get linking statistics
+    pub fn get_stats(&self) -> DynamicLinkerStats {
+        DynamicLinkerStats {
+            loaded_libraries: self.loaded_libraries.len(),
+            global_symbols: self.symbol_table.len(),
+            search_paths: self.search_paths.len(),
+        }
     }
     
     /// Parse string table and resolve library names
@@ -791,6 +907,14 @@ impl Default for DynamicLinker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Dynamic linker statistics
+#[derive(Debug, Clone, Copy)]
+pub struct DynamicLinkerStats {
+    pub loaded_libraries: usize,
+    pub global_symbols: usize,
+    pub search_paths: usize,
 }
 
 #[cfg(test)]

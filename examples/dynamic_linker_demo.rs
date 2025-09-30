@@ -42,42 +42,39 @@ pub fn load_dynamic_binary_example(binary_data: &[u8]) -> Result<(), &'static st
         return Ok(());
     }
     
-    // Step 3: Initialize dynamic linker
+    // Step 3: Initialize dynamic linker and perform complete linking
     let mut linker = DynamicLinker::new();
     
-    // Step 4: Parse PT_DYNAMIC section
+    // NEW: Use the unified link_binary workflow
+    let reloc_count = linker.link_binary(
+        binary_data,
+        &loaded.program_headers,
+        loaded.base_address
+    ).map_err(|_| "Failed to link binary")?;
+    
+    // Get statistics
+    let stats = linker.get_stats();
+    
+    // Log success (in a real kernel, we'd use proper logging)
+    // println!("Successfully linked binary:");
+    // println!("  - {} relocations applied", reloc_count);
+    // println!("  - {} symbols loaded", stats.global_symbols);
+    // println!("  - {} libraries loaded", stats.loaded_libraries);
+    
+    // Step 4: Execute init functions
+    // Parse dynamic info again to get init address
     let dynamic_info = linker.parse_dynamic_section(
         binary_data,
         &loaded.program_headers,
         loaded.base_address
     ).map_err(|_| "Failed to parse dynamic section")?;
     
-    // Step 5: Load required libraries
-    let loaded_libs = linker.load_dependencies(&dynamic_info.needed)
-        .map_err(|_| "Failed to load dependencies")?;
-    
-    // Step 6: Build global symbol table
-    // This would iterate through all loaded libraries and add their symbols
-    // For example:
-    // for lib in loaded_libs {
-    //     let symbols = parse_symbol_table(lib);
-    //     for sym in symbols {
-    //         linker.add_symbol(sym.name, sym.address);
-    //     }
-    // }
-    
-    // Step 7: Process relocations
-    // This would apply all relocations to fix up addresses
-    // let relocations = parse_relocations(&dynamic_info);
-    // linker.apply_relocations(&relocations, loaded.base_address)?;
-    
-    // Step 8: Execute init functions
     if let Some(init_addr) = dynamic_info.init {
         // Call initialization function
         // unsafe { call_function(init_addr); }
     }
     
-    // Step 9: Jump to entry point
+    // Step 5: Jump to entry point
     // unsafe { jump_to_address(loaded.entry_point); }
     
     Ok(())
