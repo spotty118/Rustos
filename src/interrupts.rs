@@ -68,6 +68,9 @@ lazy_static! {
         idt[InterruptIndex::SerialPort2.as_usize()].set_handler_fn(serial_port2_interrupt_handler);
         idt[InterruptIndex::SpuriousInterrupt.as_usize()].set_handler_fn(spurious_interrupt_handler);
 
+        // Linux syscall handler (INT 0x80)
+        idt[0x80].set_handler_fn(crate::syscall_handler::syscall_0x80_handler);
+
         idt
     };
 }
@@ -586,12 +589,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 
     // Call the time management system
     crate::time::timer_tick();
-    
-    // Process scheduled timers
-    crate::time::process_scheduled_timers();
-        // In production, this might indicate a serious system issue
-    }
-    
+
     // Process scheduled timers with error handling
     if let Err(_e) = crate::time::process_scheduled_timers() {
         // Timer processing failed, continue but log the issue

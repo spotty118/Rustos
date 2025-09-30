@@ -37,6 +37,8 @@ mod acpi;
 mod apic;
 // Include process management
 mod process;
+// Include process manager (high-level process APIs)
+mod process_manager;
 // Include scheduler
 mod scheduler;
 // Include error handling and recovery system
@@ -51,6 +53,21 @@ mod testing;
 mod package;
 // Include Linux API compatibility layer
 mod linux_compat;
+// Include memory manager for virtual memory management
+mod memory_manager;
+// Include VFS and initramfs for Linux userspace
+mod vfs;
+mod initramfs;
+// Include ELF loader for binary execution
+mod elf_loader;
+// Include syscall handler for INT 0x80
+mod syscall_handler;
+// Include fast syscall support (SYSCALL/SYSRET)
+mod syscall_fast;
+// Include usermode helper module
+mod usermode;
+// Include usermode testing module
+mod usermode_test;
 
 // VGA_WRITER is now used via macros in print module
 
@@ -240,7 +257,15 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize GDT and interrupts (required for timer interrupts)
     gdt::init();
     interrupts::init();
-    
+
+    // Initialize fast syscall support (SYSCALL/SYSRET)
+    if syscall_fast::is_supported() {
+        syscall_fast::init();
+        serial_println!("[OK] Fast syscall (SYSCALL/SYSRET) support enabled");
+    } else {
+        serial_println!("[INFO] Fast syscall not supported, using INT 0x80 only");
+    }
+
     // Initialize time management system
     match time::init() {
         Ok(()) => {
@@ -291,10 +316,15 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     keyboard::init();
     boot_display::boot_delay();
 
-    boot_display::show_boot_progress(5, 5, "Launching Desktop Environment");
+    boot_display::show_boot_progress(5, 5, "Loading Linux Userspace");
+    println!("\n🐧 Initializing Alpine Linux Userspace...");
+    match initramfs::init_initramfs() {
+        Ok(_) => println!("✅ Alpine Linux 3.19 loaded (3.1 MB)"),
+        Err(_) => println!("⚠️  Initramfs initialization incomplete"),
+    }
     boot_display::boot_delay();
 
-    println!("🚀 RustOS Desktop Selection");
+    println!("\n🚀 RustOS Desktop Selection");
     println!("Current kernel can boot to either:");
     println!("1. Simple Text Desktop (MS-DOS style) - Old Implementation");
     println!("2. Modern Graphics Desktop (Current style) - New Implementation");

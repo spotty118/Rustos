@@ -1216,7 +1216,7 @@ mod tests {
     }
 }
 //
- Placeholder implementations for memory management functions
+// Placeholder implementations for memory management functions
 // These would be implemented in the actual memory management module
 
 mod memory_stubs {

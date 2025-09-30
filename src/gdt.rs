@@ -219,10 +219,29 @@ pub fn get_stack_info() -> StackInfo {
 }
 
 /// Set kernel stack pointer in TSS (for task switching)
-pub fn set_kernel_stack(_stack_ptr: VirtAddr) {
-    // In a full implementation, this would modify the TSS
-    // For now, we'll just store it for reference
-    // Kernel stack pointer set
+///
+/// This sets RSP0 in the TSS, which is used by the CPU when switching
+/// from user mode (Ring 3) to kernel mode (Ring 0) via interrupts or syscalls.
+///
+/// # Safety
+///
+/// The stack pointer must point to a valid, mapped kernel stack.
+pub fn set_kernel_stack(stack_ptr: VirtAddr) {
+    use core::ptr;
+
+    // Get a mutable reference to TSS
+    // Safety: We have exclusive access via the init process
+    let tss = unsafe {
+        // Cast away const to get mutable access
+        // This is safe because we're the only ones modifying TSS
+        &mut *((&*TSS as *const TaskStateSegment) as *mut TaskStateSegment)
+    };
+
+    // Set RSP0 (Ring 0 stack pointer)
+    // This is the stack used when transitioning from Ring 3 to Ring 0
+    tss.privilege_stack_table[0] = stack_ptr;
+
+    crate::serial_println!("Kernel stack set to {:?} in TSS", stack_ptr);
 }
 
 /// Set user stack pointer (for task switching)
