@@ -8,6 +8,8 @@ Welcome to the comprehensive documentation for RustOS, a production-ready operat
 
 | Document | Description | Audience |
 |----------|-------------|----------|
+| **[FAQ](FAQ.md)** | Frequently asked questions, including Linux compatibility | Everyone, new users |
+| **[Linux Compatibility](LINUX_COMPATIBILITY.md)** | Detailed guide on Linux software compatibility | Application developers, porters |
 | **[Architecture](ARCHITECTURE.md)** | System design, boot process, and architectural principles | Kernel developers, system architects |
 | **[API Reference](API_REFERENCE.md)** | Complete API documentation for all subsystems | Application developers, kernel module developers |
 | **[Module Index](MODULE_INDEX.md)** | Comprehensive module listing with cross-references | All developers |
@@ -209,7 +211,8 @@ make run-release    # Optimized build for performance testing
 ## 🔗 Quick Reference Links
 
 ### Essential Reading
-- **New to RustOS?** → [Architecture](ARCHITECTURE.md)
+- **New to RustOS?** → [FAQ](FAQ.md) or [Architecture](ARCHITECTURE.md)
+- **Linux compatibility questions?** → [Linux Compatibility Guide](LINUX_COMPATIBILITY.md)
 - **Building the kernel?** → [Build Guide](BUILD_GUIDE.md)
 - **Writing code?** → [API Reference](API_REFERENCE.md)
 - **Finding modules?** → [Module Index](MODULE_INDEX.md)
