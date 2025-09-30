@@ -510,10 +510,14 @@ pub fn send_ipv4_packet(
         match super::arp::lookup_arp(&dst_ip) {
             Some(mac) => mac,
             None => {
-                // MAC not in ARP cache - send ARP request and use broadcast as fallback
-                // In production, packet would be queued pending ARP resolution
+                // MAC not in ARP cache - send ARP request
+                // Production implementation: queue packet and retry after ARP response
                 let _ = super::arp::send_arp_request(dst_ip, interface.name.clone());
-                NetworkAddress::Mac([0xFF; 6])
+                
+                // For now, return error to indicate packet cannot be sent yet
+                // In full implementation, this would queue the packet and caller would retry
+                // or we'd implement async packet queueing with callbacks
+                return Err(NetworkError::NetworkUnreachable);
             }
         }
     };

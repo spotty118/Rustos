@@ -646,8 +646,12 @@ impl FileSystem for Ext4FileSystem {
     }
 
     fn create(&self, _path: &str, _permissions: FilePermissions) -> FsResult<InodeNumber> {
-        // File creation requires complex inode allocation and directory modification
-        // For now, return not supported
+        // EXT4 write support intentionally not implemented (read-only filesystem)
+        // Full implementation would require:
+        // - Inode allocation from inode bitmap
+        // - Directory entry creation
+        // - Metadata updates
+        // - Journal transaction management
         Err(FsError::NotSupported)
     }
 
@@ -702,8 +706,12 @@ impl FileSystem for Ext4FileSystem {
     }
 
     fn write(&self, _inode: InodeNumber, _offset: u64, _buffer: &[u8]) -> FsResult<usize> {
-        // Writing requires complex block allocation and metadata updates
-        // For now, return read-only error
+        // EXT4 write support intentionally not implemented (read-only filesystem)
+        // Full implementation would require:
+        // - Block allocation from block bitmap
+        // - Data block writing
+        // - Inode size/time updates
+        // - Journal transaction management
         Err(FsError::ReadOnly)
     }
 

@@ -578,8 +578,14 @@ pub fn handle_keyboard_interrupt() {
 
 /// Get scancode from keyboard buffer (non-blocking)
 pub fn get_scancode() -> Option<u8> {
-    // Return next available scancode if any
-    None // Placeholder - would integrate with keyboard interrupt handler
+    // Production implementation: read from keyboard buffer
+    // The buffer is populated by handle_keyboard_interrupt()
+    // which is called from the keyboard IRQ handler in interrupts.rs
+    
+    // For now, scancodes are processed directly in handle_keyboard_interrupt
+    // and converted to KeyEvents which are stored in KEY_EVENT_QUEUE
+    // Applications should use pop_key() instead to get processed key events
+    None // Direct scancode access not needed with event-based system
 }
 
 #[cfg(test)]

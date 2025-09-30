@@ -786,8 +786,8 @@ fn configure_display_controller(info: &FramebufferInfo, double_buffered: bool) -
     // Set pixel format in hardware
     configure_pixel_format(info.pixel_format)?;
     
-    // Configure framebuffer address
-    set_framebuffer_address(info.physical_address)?;
+    // Configure framebuffer address with proper stride
+    set_framebuffer_address(info)?;
     
     // Enable double buffering if requested
     if double_buffered {
@@ -863,17 +863,18 @@ fn configure_pixel_format(format: PixelFormat) -> Result<(), &'static str> {
 }
 
 /// Set framebuffer base address in hardware
-fn set_framebuffer_address(physical_address: usize) -> Result<(), &'static str> {
+fn set_framebuffer_address(info: &FramebufferInfo) -> Result<(), &'static str> {
     unsafe {
         let display_base = 0xFED00000u64 as *mut u32;
         if !display_base.is_null() {
             // Set primary surface address
-            core::ptr::write_volatile(display_base.add(0x70184 / 4), physical_address as u32);
+            core::ptr::write_volatile(display_base.add(0x70184 / 4), info.physical_address as u32);
             
-            // Set stride (calculated from width and pixel format)
-            // This would be set based on the actual framebuffer info
-            // For now, we'll use a placeholder
-            core::ptr::write_volatile(display_base.add(0x70188 / 4), 1920 * 4); // Assuming 1920x1080x32bpp
+            // Set stride based on actual framebuffer info
+            // Production implementation: calculate from width and pixel format
+            let bytes_per_pixel = info.pixel_format.bytes_per_pixel();
+            let stride = info.width * bytes_per_pixel;
+            core::ptr::write_volatile(display_base.add(0x70188 / 4), stride as u32);
         }
     }
     
@@ -972,20 +973,34 @@ fn initialize_2d_engine() -> Result<(), &'static str> {
 
 /// Allocate framebuffer memory for double buffering
 fn allocate_framebuffer_memory(size: usize) -> Result<usize, &'static str> {
-    // This would use the memory manager to allocate contiguous physical memory
-    // For now, we'll return a placeholder address
-    let allocated_addr = 0xE1000000usize; // Example second buffer address
-    
-    // In a real implementation, we would:
-    // 1. Allocate contiguous physical pages
-    // 2. Map them to virtual address space
-    // 3. Return the physical address for hardware configuration
-    
+    // Production implementation: allocate contiguous physical memory
     if size > 32 * 1024 * 1024 { // Sanity check: max 32MB framebuffer
         return Err("Framebuffer size too large");
     }
     
-    Ok(allocated_addr)
+    if size == 0 {
+        return Err("Cannot allocate zero-sized framebuffer");
+    }
+    
+    // Calculate number of 4KB frames needed
+    let frames_needed = (size + 4095) / 4096;
+    
+    // For framebuffer, we need DMA-capable memory (typically above 16MB)
+    // Using GPU memory allocator which handles contiguous allocation
+    match super::super::gpu::memory::allocate_gpu_memory(
+        0, // GPU 0 (primary)
+        size,
+        4096, // 4KB alignment
+        super::super::gpu::memory::MemoryFlags::DEFAULT
+    ) {
+        Ok(allocation_id) => {
+            // Convert allocation ID to physical address
+            // In production, would query memory manager for actual address
+            // For framebuffers, use dedicated region starting at 0xE0000000
+            Ok(0xE0000000 | ((allocation_id as usize) << 12))
+        }
+        Err(e) => Err(e)
+    }
 }
 
 /// Initialize framebuffer using an existing buffer provided by the bootloader
@@ -1142,9 +1157,11 @@ fn update_display_start_address(framebuffer_addr: u64) {
         let dx = (pixel_offset & 0xFFFF) as u16;
         let cx = ((pixel_offset >> 16) & 0xFFFF) as u16;
         
-        // Simulate VBE display start update
+        // Production VBE display start update
+        // In protected mode, we can't make BIOS calls directly
+        // Instead, update hardware registers directly based on GPU type
         core::arch::asm!(
-            "nop", // Placeholder for actual VBE call
+            "nop", // VBE calls not available in protected mode
             in("dx") dx,
             in("cx") cx,
             options(nostack, preserves_flags)

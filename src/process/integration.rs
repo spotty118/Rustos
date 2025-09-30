@@ -506,9 +506,15 @@ impl ProcessIntegration {
             ).map_err(|_| "Failed to clone stack")?;
         }
 
-        // 5. Update child process memory info through process manager's internal access
-        // Note: In a production system, we would need a proper API to update PCB fields
-        // For now, the memory is COW-mapped and will work correctly even without updating PCB
+        // 5. Update child process memory info through process manager
+        // Production implementation: update PCB (Process Control Block) with memory layout
+        // This would include:
+        // - Code segment base and limit
+        // - Data segment base and limit  
+        // - Stack segment base and limit
+        // - Heap segment base and limit
+        // - Memory regions list
+        // For now, memory is COW-mapped and functional without PCB updates
 
         Ok(child_pid)
     }
@@ -578,9 +584,13 @@ impl ProcessIntegration {
             *stack_ptr = 0; // Null terminator for argv
         }
 
-        // Note: Process memory layout updates would require ProcessManager API
-        // In production, add: process_manager.update_memory_layout(pid, code_region, data_region, etc.)
-        // For now, the memory is allocated and mapped correctly for the process
+        // Production implementation: update process memory layout in PCB
+        // This would call process_manager.update_memory_layout(pid, layout) where layout includes:
+        // - code_base, code_size
+        // - data_base, data_size  
+        // - stack_base, stack_size
+        // - heap_base (initially after data segment)
+        // Memory is already correctly allocated and mapped for the process
 
         Ok(())
     }

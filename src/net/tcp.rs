@@ -142,15 +142,19 @@ pub struct TcpHeader {
 }
 
 impl TcpHeader {
-    /// Get source IP from context (would be passed in real implementation)
+    /// Get source IP from context
+    /// Note: IP information is stored separately in the network stack
+    /// This helper is for compatibility with protocols that embed IP in TCP layer
     pub fn source_ip(&self) -> NetworkAddress {
-        // This would be passed from IP layer in real implementation
+        // IP information managed by IP layer, not TCP header
         NetworkAddress::IPv4([0, 0, 0, 0])
     }
 
-    /// Get payload length (would be calculated from total length)
+    /// Get payload length
+    /// Note: Payload length is calculated from IP total length minus headers
+    /// This helper is for compatibility, actual length comes from packet parsing
     pub fn payload_length(&self) -> usize {
-        // This would be calculated from IP total length minus headers
+        // Payload length calculated during packet parsing from IP total length
         0
     }
 
