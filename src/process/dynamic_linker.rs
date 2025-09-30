@@ -29,6 +29,8 @@ use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 use x86_64::VirtAddr;
 use core::fmt;
+use spin::Mutex;
+use lazy_static::lazy_static;
 
 use super::elf_loader::{Elf64Header, Elf64ProgramHeader, elf_constants};
 use crate::memory::{MemoryRegionType, MemoryProtection};
@@ -1121,20 +1123,26 @@ mod tests {
 }
 
 /// Global dynamic linker instance
-static mut GLOBAL_DYNAMIC_LINKER: Option<DynamicLinker> = None;
+lazy_static! {
+    static ref GLOBAL_DYNAMIC_LINKER: Mutex<Option<DynamicLinker>> = Mutex::new(None);
+}
 
 /// Initialize the global dynamic linker
 pub fn init_dynamic_linker() {
-    unsafe {
-        GLOBAL_DYNAMIC_LINKER = Some(DynamicLinker::new());
-    }
+    *GLOBAL_DYNAMIC_LINKER.lock() = Some(DynamicLinker::new());
 }
 
 /// Get a reference to the global dynamic linker
-pub fn get_dynamic_linker() -> Option<&'static mut DynamicLinker> {
-    unsafe {
-        GLOBAL_DYNAMIC_LINKER.as_mut()
-    }
+/// 
+/// # Safety
+/// This function provides mutable access to the global dynamic linker.
+/// Caller must ensure proper synchronization when using the returned reference.
+pub fn with_dynamic_linker<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut DynamicLinker) -> R,
+{
+    let mut linker = GLOBAL_DYNAMIC_LINKER.lock();
+    linker.as_mut().map(f)
 }
 
 /// Link a binary using the global dynamic linker
