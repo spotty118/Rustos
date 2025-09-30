@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use crate::package::{PackageResult, PackageError, PackageMetadata, ExtractedPackage};
 use crate::package::adapters::PackageAdapter;
 use crate::package::archive::ar::ArArchive;
+use crate::package::compression::{TarArchive, decompress};
 
 /// Debian package adapter
 pub struct DebAdapter;
@@ -103,22 +104,46 @@ impl PackageAdapter for DebAdapter {
         // Parse ar archive
         let ar_archive = ArArchive::parse(data)?;
 
-        // Find control.tar.gz member
-        let control_data = ar_archive.find_member("control.tar.gz")
+        // Extract metadata from control archive
+        let metadata = self.parse_metadata(data)?;
+        let mut package = ExtractedPackage::new(metadata);
+
+        // Find and extract control scripts
+        let control_compressed = ar_archive.find_member("control.tar.gz")
             .or_else(|| ar_archive.find_member("control.tar.xz"))
             .ok_or_else(|| PackageError::InvalidFormat(
                 "Missing control archive in .deb".to_string()
             ))?;
 
-        // For now, we'll look for the control file directly
-        // Full implementation would extract tar.gz archives
-        let metadata = self.parse_metadata(data)?;
+        let control_tar = decompress(control_compressed)?;
+        let control_archive = TarArchive::parse(&control_tar)?;
 
-        let mut package = ExtractedPackage::new(metadata);
+        // Extract control scripts (postinst, prerm, postrm, preinst)
+        for entry in control_archive.entries() {
+            let path = entry.path.trim_start_matches("./");
+            if path.starts_with("post") || path.starts_with("pre") || path == "config" {
+                if let Ok(content) = core::str::from_utf8(&entry.data) {
+                    package.add_script(path.to_string(), content.to_string());
+                }
+            }
+        }
 
-        // Note: Full extraction requires tar and gzip/xz decompression
-        // This is a stub that sets up the structure
-        
+        // Find and extract data archive
+        let data_compressed = ar_archive.find_member("data.tar.gz")
+            .or_else(|| ar_archive.find_member("data.tar.xz"))
+            .or_else(|| ar_archive.find_member("data.tar.bz2"))
+            .ok_or_else(|| PackageError::InvalidFormat(
+                "Missing data archive in .deb".to_string()
+            ))?;
+
+        let data_tar = decompress(data_compressed)?;
+        let data_archive = TarArchive::parse(&data_tar)?;
+
+        // Extract all data files
+        for entry in data_archive.entries() {
+            package.add_file(entry.path.clone(), entry.data.clone());
+        }
+
         Ok(package)
     }
 
@@ -126,18 +151,33 @@ impl PackageAdapter for DebAdapter {
         // Parse ar archive to get control file
         let ar_archive = ArArchive::parse(data)?;
 
-        // Find control.tar.gz
-        let control_data = ar_archive.find_member("control.tar.gz")
+        // Find control.tar.gz or control.tar.xz
+        let control_compressed = ar_archive.find_member("control.tar.gz")
             .or_else(|| ar_archive.find_member("control.tar.xz"))
             .ok_or_else(|| PackageError::InvalidFormat(
                 "Missing control archive".to_string()
             ))?;
 
-        // TODO: Extract tar.gz to get control file
-        // For now, create minimal metadata
-        Err(PackageError::NotImplemented(
-            "Full control file parsing requires tar/gzip support".to_string()
-        ))
+        // Decompress the control archive
+        let control_tar = decompress(control_compressed)?;
+
+        // Extract tar archive
+        let tar_archive = TarArchive::parse(&control_tar)?;
+
+        // Find the control file
+        let control_entry = tar_archive.find_entry("control")
+            .or_else(|| tar_archive.find_entry("./control"))
+            .ok_or_else(|| PackageError::InvalidFormat(
+                "Missing control file in control archive".to_string()
+            ))?;
+
+        // Parse control file content
+        let control_content = core::str::from_utf8(&control_entry.data)
+            .map_err(|_| PackageError::InvalidFormat(
+                "Invalid UTF-8 in control file".to_string()
+            ))?;
+
+        self.parse_control_file(control_content)
     }
 
     fn validate(&self, data: &[u8]) -> PackageResult<bool> {

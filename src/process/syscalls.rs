@@ -68,6 +68,15 @@ pub enum SyscallNumber {
     // I/O control
     Ioctl = 60,         // Device-specific operations
     Fcntl = 61,         // File control operations
+
+    // Package management (experimental)
+    PkgInstall = 200,   // Install package
+    PkgRemove = 201,    // Remove package
+    PkgSearch = 202,    // Search packages
+    PkgInfo = 203,      // Get package info
+    PkgList = 204,      // List installed packages
+    PkgUpdate = 205,    // Update package database
+    PkgUpgrade = 206,   // Upgrade package
 }
 
 impl From<u64> for SyscallNumber {
@@ -116,6 +125,13 @@ impl From<u64> for SyscallNumber {
             52 => SyscallNumber::SetTidAddress,
             60 => SyscallNumber::Ioctl,
             61 => SyscallNumber::Fcntl,
+            200 => SyscallNumber::PkgInstall,
+            201 => SyscallNumber::PkgRemove,
+            202 => SyscallNumber::PkgSearch,
+            203 => SyscallNumber::PkgInfo,
+            204 => SyscallNumber::PkgList,
+            205 => SyscallNumber::PkgUpdate,
+            206 => SyscallNumber::PkgUpgrade,
             _ => SyscallNumber::Exit, // Default to exit for unknown syscalls
         }
     }
@@ -253,6 +269,13 @@ impl SyscallDispatcher {
             SyscallNumber::SetTidAddress => self.sys_set_tid_address(args, process_manager, current_pid),
             SyscallNumber::Ioctl => self.sys_ioctl(args, process_manager, current_pid),
             SyscallNumber::Fcntl => self.sys_fcntl(args, process_manager, current_pid),
+            SyscallNumber::PkgInstall => self.sys_pkg_install(args),
+            SyscallNumber::PkgRemove => self.sys_pkg_remove(args),
+            SyscallNumber::PkgSearch => self.sys_pkg_search(args),
+            SyscallNumber::PkgInfo => self.sys_pkg_info(args),
+            SyscallNumber::PkgList => self.sys_pkg_list(args),
+            SyscallNumber::PkgUpdate => self.sys_pkg_update(args),
+            SyscallNumber::PkgUpgrade => self.sys_pkg_upgrade(args),
         };
 
         match result {
@@ -1415,6 +1438,71 @@ impl SyscallDispatcher {
         // TODO: Implement fcntl() for file descriptor control
         // Critical for file locking and flag manipulation
         SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    // Package management syscalls (experimental)
+
+    fn sys_pkg_install(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            200, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::PermissionDenied),
+        }
+    }
+
+    fn sys_pkg_remove(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            201, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::PermissionDenied),
+        }
+    }
+
+    fn sys_pkg_search(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            202, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::NotFound),
+        }
+    }
+
+    fn sys_pkg_info(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            203, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::NotFound),
+        }
+    }
+
+    fn sys_pkg_list(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            204, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::OperationNotSupported),
+        }
+    }
+
+    fn sys_pkg_update(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            205, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::OperationNotSupported),
+        }
+    }
+
+    fn sys_pkg_upgrade(&self, args: &[u64]) -> SyscallResult {
+        match crate::package::handle_package_syscall(
+            206, args[0] as usize, args[1] as usize, args[2] as usize, args[3] as usize
+        ) {
+            Ok(val) => SyscallResult::Success(val as u64),
+            Err(_) => SyscallResult::Error(SyscallError::PermissionDenied),
+        }
     }
 
     /// Get system call statistics

@@ -27,13 +27,19 @@ pub mod types;
 pub mod adapters;
 pub mod database;
 pub mod archive;
+pub mod compression;
 pub mod api;
 pub mod manager;
+pub mod syscalls;
+
+#[cfg(test)]
+pub mod tests;
 
 pub use types::*;
 pub use adapters::*;
 pub use database::*;
 pub use manager::PackageManager;
+pub use syscalls::{init_package_manager, handle_package_syscall};
 
 /// Result type for package operations
 pub type PackageResult<T> = Result<T, PackageError>;

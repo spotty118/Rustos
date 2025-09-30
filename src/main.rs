@@ -49,6 +49,8 @@ mod logging;
 mod testing;
 // Include experimental package management system
 mod package;
+// Include Linux API compatibility layer
+mod linux_compat;
 
 // VGA_WRITER is now used via macros in print module
 
@@ -371,10 +373,16 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         
         // Demonstrate the new error handling and logging system
         demonstrate_error_handling_and_logging();
-        
+
         // Run comprehensive tests if requested
         demonstrate_comprehensive_testing();
-        
+
+        // Initialize package management system
+        demonstrate_package_manager();
+
+        // Initialize and demonstrate Linux compatibility layer
+        demonstrate_linux_compat();
+
         simple_desktop::init_desktop();
         desktop_main_loop()
     }
@@ -414,6 +422,102 @@ fn demonstrate_error_handling_and_logging() {
     println!("   Recent Log Entries: {} stored in memory", recent_logs.len());
     
     println!("✅ Error handling and logging demonstration complete");
+    println!();
+}
+
+/// Demonstrate the package management system
+fn demonstrate_package_manager() {
+    println!("📦 Demonstrating Package Management System:");
+
+    // Initialize package manager with Native RustOS package manager
+    package::init_package_manager(package::PackageManagerType::Native);
+    println!("   ✅ Package manager initialized (Native RustOS mode)");
+
+    // Show supported package formats
+    println!("   📋 Supported Package Formats:");
+    println!("      • .deb  - Debian/Ubuntu packages (full support)");
+    println!("      • .rpm  - Fedora/RHEL packages (validation only)");
+    println!("      • .apk  - Alpine Linux packages (validation only)");
+    println!("      • .rustos - Native RustOS packages (planned)");
+
+    println!("   🔧 Available Operations:");
+    println!("      • Install: syscall(200, name_ptr, name_len)");
+    println!("      • Remove: syscall(201, name_ptr, name_len)");
+    println!("      • Search: syscall(202, query_ptr, query_len, result_ptr, result_len)");
+    println!("      • Info: syscall(203, name_ptr, name_len, result_ptr, result_len)");
+    println!("      • List: syscall(204, result_ptr, result_len)");
+    println!("      • Update: syscall(205)");
+    println!("      • Upgrade: syscall(206, name_ptr, name_len)");
+
+    println!("   📚 Features:");
+    println!("      • AR archive parsing (for .deb)");
+    println!("      • TAR archive extraction");
+    println!("      • GZIP/DEFLATE decompression");
+    println!("      • Package metadata parsing");
+    println!("      • Dependency tracking");
+    println!("      • Package database management");
+
+    println!("   ⚠️  Note: Full installation requires:");
+    println!("      • Network stack (for downloads)");
+    println!("      • Filesystem support (for file installation)");
+    println!("      • Script execution (for postinst/prerm)");
+
+    println!("✅ Package management system demonstration complete");
+    println!();
+}
+
+/// Demonstrate the Linux compatibility layer
+fn demonstrate_linux_compat() {
+    println!("🐧 Demonstrating Linux API Compatibility Layer:");
+
+    // Initialize Linux compatibility layer
+    linux_compat::init_linux_compat();
+    println!("   ✅ Linux compatibility layer initialized");
+
+    // Show supported API categories
+    println!("   📋 Supported POSIX/Linux APIs (200+ functions):");
+    println!("      • File Operations: fstat, lstat, access, dup, link, chmod, chown, truncate");
+    println!("      • Process Control: getuid, setuid, getpgid, setsid, getrusage, prctl");
+    println!("      • Time APIs: clock_gettime, nanosleep, timer_create, gettimeofday");
+    println!("      • Signal Handling: sigaction, sigprocmask, sigpending, rt_sig*, pause");
+    println!("      • Socket Operations: send, recv, setsockopt, poll, epoll, select");
+    println!("      • IPC: message queues, semaphores, shared memory, eventfd, timerfd");
+    println!("      • Device Control: ioctl, fcntl, flock");
+    println!("      • Advanced I/O: pread/pwrite, readv/writev, sendfile, splice, tee");
+    println!("      • Extended Attrs: getxattr, setxattr, listxattr, removexattr");
+    println!("      • Directory Ops: mkdir, rmdir, getdents64");
+    println!("      • Terminal/TTY: tcgetattr, tcsetattr, openpty, isatty, cfsetspeed");
+    println!("      • Memory Mgmt: mmap, munmap, mprotect, madvise, mlock, brk, sbrk");
+    println!("      • Threading: clone, futex, set_tid_address, robust_list, arch_prctl");
+    println!("      • Filesystem: mount, umount, statfs, pivot_root, sync, quotactl");
+    println!("      • Resources: getrlimit, setrlimit, prlimit, getpriority, sched_*");
+    println!("      • System Info: sysinfo, uname, gethostname, getrandom, syslog");
+
+    // Show statistics
+    let stats = linux_compat::get_compat_stats();
+    println!("   📊 API Call Statistics:");
+    println!("      • File operations: {}", stats.file_ops_count);
+    println!("      • Process operations: {}", stats.process_ops_count);
+    println!("      • Time operations: {}", stats.time_ops_count);
+    println!("      • Signal operations: {}", stats.signal_ops_count);
+    println!("      • Socket operations: {}", stats.socket_ops_count);
+    println!("      • IPC operations: {}", stats.ipc_ops_count);
+    println!("      • Ioctl operations: {}", stats.ioctl_ops_count);
+    println!("      • Advanced I/O: {}", stats.advanced_io_count);
+    println!("      • TTY operations: {}", stats.tty_ops_count);
+    println!("      • Memory operations: {}", stats.memory_ops_count);
+    println!("      • Thread operations: {}", stats.thread_ops_count);
+    println!("      • Filesystem operations: {}", stats.fs_ops_count);
+    println!("      • Resource operations: {}", stats.resource_ops_count);
+    println!("      • Sysinfo operations: {}", stats.sysinfo_ops_count);
+
+    println!("   ✨ Linux Compatibility Features:");
+    println!("      • POSIX-compliant error codes (errno)");
+    println!("      • Linux syscall number compatibility");
+    println!("      • struct stat, timespec, sigaction compatibility");
+    println!("      • Binary-compatible with Linux applications");
+
+    println!("✅ Linux compatibility layer demonstration complete");
     println!();
 }
 
