@@ -18,6 +18,9 @@ pub enum SyscallNumber {
     GetPid = 4,
     GetPpid = 5,
     Sleep = 6,
+    Clone = 7,          // Create thread/process (flexible fork)
+    Execve = 8,         // Execute program (enhanced)
+    WaitId = 9,         // Wait for process state change
 
     // File I/O
     Open = 10,
@@ -26,17 +29,31 @@ pub enum SyscallNumber {
     Write = 13,
     Seek = 14,
     Stat = 15,
+    OpenAt = 16,        // Open file relative to directory fd
+    MkdirAt = 17,       // Create directory
+    UnlinkAt = 18,      // Delete file/directory
+    Fchmod = 19,        // Change file permissions
 
     // Memory management
     Mmap = 20,
     Munmap = 21,
     Brk = 22,
     Sbrk = 23,
+    MProtect = 24,      // Change memory protection
+    Madvise = 25,       // Give advice about memory usage
 
     // Process communication
     Pipe = 30,
     Signal = 31,
     Kill = 32,
+    Futex = 33,         // Fast userspace mutex
+    
+    // Networking (for dynamic linker supporting network libraries)
+    Socket = 35,
+    Bind = 36,
+    Connect = 37,
+    Listen = 38,
+    Accept = 39,
 
     // System information
     Uname = 40,
@@ -46,6 +63,11 @@ pub enum SyscallNumber {
     // Process control
     SetPriority = 50,
     GetPriority = 51,
+    SetTidAddress = 52, // Set thread ID address
+    
+    // I/O control
+    Ioctl = 60,         // Device-specific operations
+    Fcntl = 61,         // File control operations
 }
 
 impl From<u64> for SyscallNumber {
@@ -58,24 +80,42 @@ impl From<u64> for SyscallNumber {
             4 => SyscallNumber::GetPid,
             5 => SyscallNumber::GetPpid,
             6 => SyscallNumber::Sleep,
+            7 => SyscallNumber::Clone,
+            8 => SyscallNumber::Execve,
+            9 => SyscallNumber::WaitId,
             10 => SyscallNumber::Open,
             11 => SyscallNumber::Close,
             12 => SyscallNumber::Read,
             13 => SyscallNumber::Write,
             14 => SyscallNumber::Seek,
             15 => SyscallNumber::Stat,
+            16 => SyscallNumber::OpenAt,
+            17 => SyscallNumber::MkdirAt,
+            18 => SyscallNumber::UnlinkAt,
+            19 => SyscallNumber::Fchmod,
             20 => SyscallNumber::Mmap,
             21 => SyscallNumber::Munmap,
             22 => SyscallNumber::Brk,
             23 => SyscallNumber::Sbrk,
+            24 => SyscallNumber::MProtect,
+            25 => SyscallNumber::Madvise,
             30 => SyscallNumber::Pipe,
             31 => SyscallNumber::Signal,
             32 => SyscallNumber::Kill,
+            33 => SyscallNumber::Futex,
+            35 => SyscallNumber::Socket,
+            36 => SyscallNumber::Bind,
+            37 => SyscallNumber::Connect,
+            38 => SyscallNumber::Listen,
+            39 => SyscallNumber::Accept,
             40 => SyscallNumber::Uname,
             41 => SyscallNumber::GetTime,
             42 => SyscallNumber::SetTime,
             50 => SyscallNumber::SetPriority,
             51 => SyscallNumber::GetPriority,
+            52 => SyscallNumber::SetTidAddress,
+            60 => SyscallNumber::Ioctl,
+            61 => SyscallNumber::Fcntl,
             _ => SyscallNumber::Exit, // Default to exit for unknown syscalls
         }
     }
@@ -177,24 +217,42 @@ impl SyscallDispatcher {
             SyscallNumber::GetPid => self.sys_getpid(process_manager, current_pid),
             SyscallNumber::GetPpid => self.sys_getppid(process_manager, current_pid),
             SyscallNumber::Sleep => self.sys_sleep(args, process_manager, current_pid),
+            SyscallNumber::Clone => self.sys_clone(args, process_manager, current_pid),
+            SyscallNumber::Execve => self.sys_execve(args, process_manager, current_pid),
+            SyscallNumber::WaitId => self.sys_waitid(args, process_manager, current_pid),
             SyscallNumber::Open => self.sys_open(args, process_manager, current_pid),
             SyscallNumber::Close => self.sys_close(args, process_manager, current_pid),
             SyscallNumber::Read => self.sys_read(args, process_manager, current_pid),
             SyscallNumber::Write => self.sys_write(args, process_manager, current_pid),
             SyscallNumber::Seek => self.sys_seek(args, process_manager, current_pid),
             SyscallNumber::Stat => self.sys_stat(args, process_manager, current_pid),
+            SyscallNumber::OpenAt => self.sys_openat(args, process_manager, current_pid),
+            SyscallNumber::MkdirAt => self.sys_mkdirat(args, process_manager, current_pid),
+            SyscallNumber::UnlinkAt => self.sys_unlinkat(args, process_manager, current_pid),
+            SyscallNumber::Fchmod => self.sys_fchmod(args, process_manager, current_pid),
             SyscallNumber::Mmap => self.sys_mmap(args, process_manager, current_pid),
             SyscallNumber::Munmap => self.sys_munmap(args, process_manager, current_pid),
             SyscallNumber::Brk => self.sys_brk(args, process_manager, current_pid),
             SyscallNumber::Sbrk => self.sys_sbrk(args, process_manager, current_pid),
+            SyscallNumber::MProtect => self.sys_mprotect(args, process_manager, current_pid),
+            SyscallNumber::Madvise => self.sys_madvise(args, process_manager, current_pid),
             SyscallNumber::Pipe => self.sys_pipe(args, process_manager, current_pid),
             SyscallNumber::Signal => self.sys_signal(args, process_manager, current_pid),
             SyscallNumber::Kill => self.sys_kill(args, process_manager, current_pid),
+            SyscallNumber::Futex => self.sys_futex(args, process_manager, current_pid),
+            SyscallNumber::Socket => self.sys_socket(args, process_manager, current_pid),
+            SyscallNumber::Bind => self.sys_bind(args, process_manager, current_pid),
+            SyscallNumber::Connect => self.sys_connect(args, process_manager, current_pid),
+            SyscallNumber::Listen => self.sys_listen(args, process_manager, current_pid),
+            SyscallNumber::Accept => self.sys_accept(args, process_manager, current_pid),
             SyscallNumber::Uname => self.sys_uname(args, process_manager, current_pid),
             SyscallNumber::GetTime => self.sys_gettime(process_manager),
             SyscallNumber::SetTime => self.sys_settime(args, process_manager, current_pid),
             SyscallNumber::SetPriority => self.sys_setpriority(args, process_manager, current_pid),
             SyscallNumber::GetPriority => self.sys_getpriority(args, process_manager, current_pid),
+            SyscallNumber::SetTidAddress => self.sys_set_tid_address(args, process_manager, current_pid),
+            SyscallNumber::Ioctl => self.sys_ioctl(args, process_manager, current_pid),
+            SyscallNumber::Fcntl => self.sys_fcntl(args, process_manager, current_pid),
         };
 
         match result {
@@ -1240,6 +1298,123 @@ impl SyscallDispatcher {
             Some(pcb) => SyscallResult::Success(pcb.priority as u64),
             None => SyscallResult::Error(SyscallError::ProcessNotFound),
         }
+    }
+
+    // Extended system calls for Linux application support
+
+    /// sys_clone - Create thread/process (flexible fork)
+    fn sys_clone(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement clone() for thread creation
+        // This is critical for dynamic linking and pthread support
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_execve - Execute program (enhanced version)
+    fn sys_execve(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement execve() with environment variables and argument parsing
+        // Required for shell and process launching
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_waitid - Wait for process state change
+    fn sys_waitid(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement waitid() for advanced process waiting
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_openat - Open file relative to directory fd
+    fn sys_openat(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement openat() for relative path operations
+        // Critical for package manager file operations
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_mkdirat - Create directory at path relative to fd
+    fn sys_mkdirat(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement mkdirat() for directory creation
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_unlinkat - Delete file/directory at path relative to fd
+    fn sys_unlinkat(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement unlinkat() for file deletion
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_fchmod - Change file permissions
+    fn sys_fchmod(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement fchmod() for permission management
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_mprotect - Change memory protection
+    fn sys_mprotect(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement mprotect() for dynamic memory protection changes
+        // Critical for dynamic linker (making GOT writable, then read-only)
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_madvise - Give advice about memory usage
+    fn sys_madvise(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement madvise() for memory usage hints
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_futex - Fast userspace mutex
+    fn sys_futex(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement futex() for efficient thread synchronization
+        // Critical for pthread and libc threading support
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_socket - Create socket
+    fn sys_socket(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement socket() for network communication
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_bind - Bind socket to address
+    fn sys_bind(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement bind() for socket binding
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_connect - Connect socket
+    fn sys_connect(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement connect() for socket connections
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_listen - Listen on socket
+    fn sys_listen(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement listen() for socket listening
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_accept - Accept socket connection
+    fn sys_accept(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement accept() for accepting connections
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_set_tid_address - Set thread ID address
+    fn sys_set_tid_address(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement set_tid_address() for thread ID management
+        // Used by dynamic linker and pthread initialization
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_ioctl - Device-specific I/O control
+    fn sys_ioctl(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement ioctl() for device control
+        SyscallResult::Error(SyscallError::OperationNotSupported)
+    }
+
+    /// sys_fcntl - File control operations
+    fn sys_fcntl(&self, _args: &[u64], _process_manager: &ProcessManager, _current_pid: Pid) -> SyscallResult {
+        // TODO: Implement fcntl() for file descriptor control
+        // Critical for file locking and flag manipulation
+        SyscallResult::Error(SyscallError::OperationNotSupported)
     }
 
     /// Get system call statistics

@@ -17,6 +17,7 @@ pub mod integration;
 pub mod thread;
 pub mod ipc;
 pub mod elf_loader;
+pub mod dynamic_linker;
 
 /// Process ID type
 pub type Pid = u32;
