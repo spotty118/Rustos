@@ -12,6 +12,7 @@ pub const KERNEL_HEAP_START: usize = 0x_4444_4444_0000;
 pub const KERNEL_HEAP_SIZE: usize = 100 * 1024 * 1024; // 100 MiB
 
 /// Simple memory statistics
+#[derive(Debug, Clone)]
 pub struct MemoryStats {
     pub total_memory: usize,
     pub usable_memory: usize,
@@ -47,6 +48,10 @@ pub fn init_memory(
 ) -> Result<MemoryStats, &'static str> {
     // For now, just analyze the memory map without setting up heap
     let stats = analyze_memory_map(memory_regions);
+    
+    // Store stats for health monitoring
+    store_memory_stats(stats.clone());
+    
     Ok(stats)
 }
 
@@ -58,4 +63,21 @@ pub fn align_up(addr: usize, align: usize) -> usize {
 /// Utility function to align down to nearest boundary
 pub fn align_down(addr: usize, align: usize) -> usize {
     addr & !(align - 1)
+}
+
+/// Global memory statistics for health monitoring
+static mut GLOBAL_MEMORY_STATS: Option<MemoryStats> = None;
+
+/// Store memory statistics for later retrieval
+pub fn store_memory_stats(stats: MemoryStats) {
+    unsafe {
+        GLOBAL_MEMORY_STATS = Some(stats);
+    }
+}
+
+/// Get current memory statistics for health monitoring
+pub fn get_memory_stats() -> Result<MemoryStats, &'static str> {
+    unsafe {
+        GLOBAL_MEMORY_STATS.clone().ok_or("Memory statistics not available")
+    }
 }

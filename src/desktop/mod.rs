@@ -9,7 +9,7 @@ use crate::graphics::framebuffer::{self, Color, FramebufferInfo, Rect};
 use heapless::Vec;
 
 // Re-export commonly used types
-pub use window_manager::{ButtonId, DesktopEvent, MouseButton, WindowId, WindowManager};
+pub use window_manager::{DesktopEvent, MouseButton, WindowId, WindowManager};
 
 /// Simplified desktop environment configuration
 #[derive(Debug, Clone, Copy)]

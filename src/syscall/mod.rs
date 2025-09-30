@@ -158,6 +158,10 @@ pub enum SyscallError {
     NotDirectory = 20,
     /// Operation not permitted (EPERM)
     NotPermitted = 32,
+    /// Invalid address (EFAULT)
+    InvalidAddress = 14,
+    /// Internal error
+    InternalError = 255,
 }
 
 /// System call context passed to handlers
@@ -184,26 +188,10 @@ pub struct SecurityValidator;
 
 impl SecurityValidator {
     /// Validate user pointer and length
-    pub fn validate_user_ptr(ptr: u64, len: u64, _write_access: bool) -> Result<(), SyscallError> {
-        // Check for null pointer
-        if ptr == 0 && len > 0 {
-            return Err(SyscallError::InvalidArgument);
-        }
-
-        // Check for overflow
-        if ptr.checked_add(len).is_none() {
-            return Err(SyscallError::InvalidArgument);
-        }
-
-        // Check if pointer is in user space (below 0x8000_0000_0000)
-        if ptr >= 0x8000_0000_0000 {
-            return Err(SyscallError::InvalidArgument);
-        }
-
-        // TODO: Check memory permissions via memory manager
-        // For now, basic validation is sufficient
-
-        Ok(())
+    pub fn validate_user_ptr(ptr: u64, len: u64, write_access: bool) -> Result<(), SyscallError> {
+        use crate::memory::user_space::UserSpaceMemory;
+        
+        UserSpaceMemory::validate_user_ptr(ptr, len, write_access)
     }
 
     /// Validate file descriptor
@@ -224,42 +212,36 @@ impl SecurityValidator {
 
     /// Copy string from user space
     pub fn copy_string_from_user(ptr: u64, max_len: usize) -> Result<String, SyscallError> {
+        use crate::memory::user_space::UserSpaceMemory;
+
         if ptr == 0 {
             return Err(SyscallError::InvalidArgument);
         }
 
         Self::validate_user_ptr(ptr, max_len as u64, false)?;
 
-        // TODO: Implement actual memory copying from user space
-        // For now, return a placeholder
-        Ok("placeholder".to_string())
+        // Use production user space memory implementation
+        UserSpaceMemory::copy_string_from_user(ptr, max_len)
     }
 
     /// Copy data from user space
     pub fn copy_from_user(ptr: u64, len: usize) -> Result<Vec<u8>, SyscallError> {
-        if ptr == 0 && len > 0 {
-            return Err(SyscallError::InvalidArgument);
+        use crate::memory::user_space::UserSpaceMemory;
+        
+        if len == 0 {
+            return Ok(Vec::new());
         }
 
-        Self::validate_user_ptr(ptr, len as u64, false)?;
-
-        // TODO: Implement actual memory copying from user space
-        // For now, return a placeholder
-        Ok(vec![0; len])
+        let mut buffer = vec![0u8; len];
+        UserSpaceMemory::copy_from_user(ptr, &mut buffer)?;
+        Ok(buffer)
     }
 
     /// Copy data to user space
     pub fn copy_to_user(ptr: u64, data: &[u8]) -> Result<(), SyscallError> {
-        if ptr == 0 && !data.is_empty() {
-            return Err(SyscallError::InvalidArgument);
-        }
-
-        Self::validate_user_ptr(ptr, data.len() as u64, true)?;
-
-        // TODO: Implement actual memory copying to user space
-        // For now, just validate
-
-        Ok(())
+        use crate::memory::user_space::UserSpaceMemory;
+        
+        UserSpaceMemory::copy_to_user(ptr, data)
     }
 }
 
@@ -348,7 +330,7 @@ extern "x86-interrupt" fn syscall_interrupt_handler(_stack_frame: InterruptStack
         user_sp: _stack_frame.stack_pointer.as_u64(),
         user_ip: _stack_frame.instruction_pointer.as_u64(),
         privilege_level: 3, // Assume user mode
-        cwd: None, // TODO: Get from process context
+        cwd: get_process_cwd(get_current_pid()),
     };
     
     // Dispatch the system call
@@ -380,10 +362,32 @@ extern "x86-interrupt" fn syscall_interrupt_handler(_stack_frame: InterruptStack
 
 /// Dispatch a system call to the appropriate handler
 pub fn dispatch_syscall(context: &SyscallContext) -> SyscallResult {
+    // Validate privilege level for the syscall
+    if let Err(error_msg) = crate::security::validate_syscall_privilege(
+        context.syscall_num as u64, 
+        context.pid
+    ) {
+        // Log security violation
+        return Err(SyscallError::PermissionDenied);
+    }
+    
+    // Validate process isolation if needed
+    if context.syscall_num == SyscallNumber::Kill {
+        let target_pid = context.args[0] as Pid;
+        if let Err(_) = crate::security::validate_process_isolation(
+            context.pid, 
+            target_pid, 
+            "signal"
+        ) {
+            return Err(SyscallError::PermissionDenied);
+        }
+    }
+    
     match context.syscall_num {
         // Process management
         SyscallNumber::Exit => sys_exit(context.args[0] as i32),
         SyscallNumber::Fork => sys_fork(),
+        SyscallNumber::Exec => sys_exec(context.args[0], context.args[1]),
         SyscallNumber::GetPid => sys_getpid(),
         SyscallNumber::GetPpid => sys_getppid(),
         SyscallNumber::Kill => sys_kill(context.args[0] as Pid, context.args[1] as i32),
@@ -444,23 +448,218 @@ fn sys_exit(exit_code: i32) -> SyscallResult {
 
 /// Fork the current process
 fn sys_fork() -> SyscallResult {
-    // Production: fork operation
-    // TODO: Implement process forking
-    Err(SyscallError::NotSupported)
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    // Verify parent process exists
+    if process_manager.get_process(current_pid).is_none() {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    // Use integration manager to fork process with copy-on-write
+    use crate::process::integration::get_integration_manager;
+    let integration_manager = get_integration_manager();
+    
+    match integration_manager.fork_process(current_pid) {
+        Ok(child_pid) => {
+            // In a real fork, we would return 0 to child and child_pid to parent
+            // For now, we return child_pid to indicate successful fork
+            // The actual return value differentiation would happen during context switch
+            Ok(child_pid as u64)
+        },
+        Err(_) => Err(SyscallError::OutOfMemory)
+    }
+}
+
+/// Execute a new program in the current process
+fn sys_exec(program_path_ptr: u64, argv_ptr: u64) -> SyscallResult {
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    // Validate program path pointer
+    if program_path_ptr == 0 {
+        return Err(SyscallError::InvalidArgument);
+    }
+    
+    // Copy program path from user space
+    let program_path = match SecurityValidator::copy_string_from_user(program_path_ptr, 4096) {
+        Ok(path) => path,
+        Err(_) => return Err(SyscallError::InvalidArgument),
+    };
+    
+    // Load program from filesystem
+    let program_data = match load_program_from_filesystem(&program_path) {
+        Ok(data) => data,
+        Err(_) => return Err(SyscallError::NotFound),
+    };
+    
+    // Validate ELF format and security
+    if let Err(_) = validate_elf_program(&program_data) {
+        return Err(SyscallError::InvalidArgument);
+    }
+    
+    // Use integration manager to execute program
+    use crate::process::integration::get_integration_manager;
+    let integration_manager = get_integration_manager();
+    
+    match integration_manager.exec_process(current_pid, &program_path, &program_data) {
+        Ok(()) => {
+            // exec() does not return on success - the process image is replaced
+            // This should not be reached in normal execution
+            Ok(0)
+        },
+        Err(_) => Err(SyscallError::InvalidArgument)
+    }
+}
+
+/// Load program from filesystem
+fn load_program_from_filesystem(path: &str) -> Result<Vec<u8>, &'static str> {
+    // Get file metadata first to determine size
+    let metadata = match crate::fs::vfs().stat(path) {
+        Ok(meta) => meta,
+        Err(_) => return Err("Failed to get file metadata"),
+    };
+    
+    // Open file through VFS
+    match crate::fs::vfs().open(path, crate::fs::OpenFlags::read_only()) {
+        Ok(fd) => {
+            // Read entire file
+            let file_size = metadata.size as usize;
+            let mut buffer = vec![0u8; file_size];
+            
+            match crate::fs::vfs().read(fd, &mut buffer) {
+                Ok(bytes_read) => {
+                    // Close file
+                    let _ = crate::fs::vfs().close(fd);
+                    if bytes_read == file_size {
+                        Ok(buffer)
+                    } else {
+                        buffer.truncate(bytes_read);
+                        Ok(buffer)
+                    }
+                },
+                Err(_) => {
+                    let _ = crate::fs::vfs().close(fd);
+                    Err("Failed to read program file")
+                }
+            }
+        },
+        Err(_) => Err("Failed to open program file")
+    }
+}
+
+/// Validate ELF program format and security
+fn validate_elf_program(program_data: &[u8]) -> Result<(), &'static str> {
+    // Check minimum size for ELF header
+    if program_data.len() < 64 {
+        return Err("Program too small to be valid ELF");
+    }
+    
+    // Check ELF magic number
+    if &program_data[0..4] != b"\x7FELF" {
+        return Err("Invalid ELF magic number");
+    }
+    
+    // Check ELF class (32-bit or 64-bit)
+    let elf_class = program_data[4];
+    if elf_class != 1 && elf_class != 2 {
+        return Err("Invalid ELF class");
+    }
+    
+    // Check data encoding (little-endian or big-endian)
+    let data_encoding = program_data[5];
+    if data_encoding != 1 && data_encoding != 2 {
+        return Err("Invalid ELF data encoding");
+    }
+    
+    // Check ELF version
+    let elf_version = program_data[6];
+    if elf_version != 1 {
+        return Err("Unsupported ELF version");
+    }
+    
+    // Check file type (executable)
+    let file_type = u16::from_le_bytes([program_data[16], program_data[17]]);
+    if file_type != 2 {
+        return Err("ELF file is not executable");
+    }
+    
+    // Check machine architecture (x86_64)
+    let machine = u16::from_le_bytes([program_data[18], program_data[19]]);
+    if machine != 0x3E {
+        return Err("ELF file is not for x86_64 architecture");
+    }
+    
+    // Basic security checks
+    // Check entry point is in valid range
+    let entry_point = if elf_class == 2 {
+        // 64-bit ELF
+        u64::from_le_bytes([
+            program_data[24], program_data[25], program_data[26], program_data[27],
+            program_data[28], program_data[29], program_data[30], program_data[31]
+        ])
+    } else {
+        // 32-bit ELF
+        u32::from_le_bytes([
+            program_data[24], program_data[25], program_data[26], program_data[27]
+        ]) as u64
+    };
+    
+    // Validate entry point is in user space
+    if entry_point < 0x400000 || entry_point >= 0x800000000000 {
+        return Err("Invalid entry point address");
+    }
+    
+    Ok(())
 }
 
 /// Get current process ID
 fn sys_getpid() -> SyscallResult {
-    Ok(get_current_pid() as u64)
+    let current_pid = get_current_pid();
+    
+    // Validate that we have a valid process ID
+    if current_pid == 0 {
+        // This should not happen in normal user-space system calls
+        // Return error if called from invalid context
+        Err(SyscallError::InvalidSyscall)
+    } else {
+        Ok(current_pid as u64)
+    }
 }
 
 /// Get parent process ID
 fn sys_getppid() -> SyscallResult {
-    // TODO: Implement parent PID lookup
-    Ok(0)
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+
+    // Validate that we have a valid process ID
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+
+    // Get parent PID from process control block
+    match process_manager.get_process(current_pid) {
+        Some(process) => {
+            match process.parent_pid {
+                Some(ppid) => Ok(ppid as u64),
+                None => Ok(0), // No parent (init process or kernel process)
+            }
+        },
+        None => Err(SyscallError::InvalidSyscall)
+    }
 }
 
-/// Send signal to process
+/// Send signal to process with enhanced privilege checking
 fn sys_kill(pid: Pid, signal: i32) -> SyscallResult {
     // Security validation
     SecurityValidator::validate_pid(pid)?;
@@ -473,7 +672,12 @@ fn sys_kill(pid: Pid, signal: i32) -> SyscallResult {
         return Err(SyscallError::NotFound);
     }
 
-    // Simple signal handling - only implement SIGKILL (9) for now
+    // Enhanced privilege checking for kill operation
+    if !crate::security::check_permission(current_pid, "kill") {
+        return Err(SyscallError::PermissionDenied);
+    }
+
+    // Additional validation for specific signals
     match signal {
         9 => {
             // SIGKILL - terminate process immediately
@@ -482,16 +686,43 @@ fn sys_kill(pid: Pid, signal: i32) -> SyscallResult {
                 return Err(SyscallError::InvalidArgument);
             }
 
+            // Check if current process can kill the target
+            if let Some(current_ctx) = crate::security::get_context(current_pid) {
+                if let Some(target_ctx) = crate::security::get_context(pid) {
+                    // Non-root users can only kill their own processes
+                    if !current_ctx.is_root() && current_ctx.uid != target_ctx.uid {
+                        return Err(SyscallError::PermissionDenied);
+                    }
+                    
+                    // Cannot kill processes with higher privilege
+                    if target_ctx.level < current_ctx.level {
+                        return Err(SyscallError::PermissionDenied);
+                    }
+                }
+            }
+
             match process_manager.terminate_process(pid, -9) {
                 Ok(()) => Ok(0),
                 Err(_) => Err(SyscallError::NotPermitted),
             }
         },
         0 => {
-            // Signal 0 - just check if process exists
+            // Signal 0 - just check if process exists and can be signaled
+            if let Some(current_ctx) = crate::security::get_context(current_pid) {
+                if let Some(target_ctx) = crate::security::get_context(pid) {
+                    if !current_ctx.is_root() && current_ctx.uid != target_ctx.uid {
+                        return Err(SyscallError::PermissionDenied);
+                    }
+                }
+            }
             Ok(0)
         },
         _ => {
+            // Other signals require capability checking
+            if !crate::security::check_capability_with_inheritance(current_pid, "cap_kill") {
+                return Err(SyscallError::PermissionDenied);
+            }
+            
             // Other signals not yet implemented
             Err(SyscallError::NotSupported)
         }
@@ -506,22 +737,69 @@ fn sys_yield() -> SyscallResult {
 
 /// Open a file
 fn sys_open(pathname: u64, flags: u32) -> SyscallResult {
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    let process = match process_manager.get_process(current_pid) {
+        Some(p) => p,
+        None => return Err(SyscallError::InvalidSyscall),
+    };
+
     // Security validation
     let path = SecurityValidator::copy_string_from_user(pathname, 4096)
         .map_err(|_| SyscallError::InvalidArgument)?;
 
+    // Validate path length and characters
+    if path.is_empty() || path.len() > 4095 {
+        return Err(SyscallError::InvalidArgument);
+    }
+
+    // Check for null bytes in path (security)
+    if path.contains('\0') {
+        return Err(SyscallError::InvalidArgument);
+    }
+
     // Convert flags to VFS open flags
     let open_flags = crate::fs::OpenFlags::from_posix(flags);
+
+    // Check file permissions before opening
+    if let Ok(metadata) = crate::fs::vfs().stat(&path) {
+        if !check_file_permissions(&metadata, &open_flags, process.uid, process.gid) {
+            return Err(SyscallError::PermissionDenied);
+        }
+    } else if !open_flags.create {
+        return Err(SyscallError::NotFound);
+    }
 
     // Open through VFS
     match crate::fs::vfs().open(&path, open_flags) {
         Ok(fd) => {
-            // Update process file descriptor table
-            let process_manager = crate::process::get_process_manager();
-            let _current_pid = process_manager.current_process();
+            // Check if process has too many open files
+            if process.file_descriptors.len() >= 1024 {
+                let _ = crate::fs::vfs().close(fd);
+                return Err(SyscallError::TooManyOpenFiles);
+            }
 
-            // TODO: Add FD to process table
-            Ok(fd as u64)
+            // Find next available file descriptor
+            let mut next_fd = 3; // Start after stdin/stdout/stderr
+            while process.file_descriptors.contains_key(&next_fd) {
+                next_fd += 1;
+                if next_fd > 65535 {
+                    let _ = crate::fs::vfs().close(fd);
+                    return Err(SyscallError::TooManyOpenFiles);
+                }
+            }
+
+            // Add to process file descriptor table
+            process.file_descriptors.insert(next_fd, fd);
+            process.file_offsets.insert(next_fd, 0);
+
+            Ok(next_fd as u64)
         },
         Err(fs_error) => {
             // Convert filesystem error to syscall error
@@ -542,8 +820,90 @@ fn sys_open(pathname: u64, flags: u32) -> SyscallResult {
     }
 }
 
+/// Convert POSIX open flags to VFS open flags
+fn convert_posix_flags_to_vfs(flags: u32) -> crate::fs::OpenFlags {
+    let mut open_flags = crate::fs::OpenFlags::empty();
+    
+    // Access mode (O_RDONLY=0, O_WRONLY=1, O_RDWR=2)
+    let access_mode = flags & 0x3;
+    match access_mode {
+        0 => open_flags.insert(crate::fs::OpenFlags::READ),      // O_RDONLY
+        1 => open_flags.insert(crate::fs::OpenFlags::WRITE),     // O_WRONLY
+        2 => {                                                   // O_RDWR
+            open_flags.insert(crate::fs::OpenFlags::READ());
+            open_flags.insert(crate::fs::OpenFlags::WRITE);
+        },
+        _ => open_flags.insert(crate::fs::OpenFlags::READ()),    // Default to read-only
+    }
+    
+    // Other flags
+    if (flags & 0x40) != 0 { open_flags.insert(crate::fs::OpenFlags::CREATE); }    // O_CREAT
+    if (flags & 0x80) != 0 { open_flags.insert(crate::fs::OpenFlags::EXCL); }      // O_EXCL
+    if (flags & 0x200) != 0 { open_flags.insert(crate::fs::OpenFlags::TRUNC); }    // O_TRUNC
+    if (flags & 0x400) != 0 { open_flags.insert(crate::fs::OpenFlags::APPEND); }   // O_APPEND
+    
+    open_flags
+}
+
+/// Check file permissions for access
+fn check_file_permissions(
+    metadata: &crate::fs::FileMetadata,
+    open_flags: &crate::fs::OpenFlags,
+    uid: u32,
+    gid: u32
+) -> bool {
+    let permissions = &metadata.permissions;
+    
+    // Root user (uid 0) can access everything
+    if uid == 0 {
+        return true;
+    }
+    
+    // Determine which permission bits to check
+    let (read_perm, write_perm, exec_perm) = if uid == metadata.uid {
+        // Owner permissions
+        (permissions.owner_read, permissions.owner_write, permissions.owner_execute)
+    } else if gid == metadata.gid {
+        // Group permissions
+        (permissions.group_read, permissions.group_write, permissions.group_execute)
+    } else {
+        // Other permissions
+        (permissions.other_read, permissions.other_write, permissions.other_execute)
+    };
+    
+    // Check read permission
+    if open_flags.read && !read_perm {
+        return false;
+    }
+    
+    // Check write permission
+    if open_flags.write && !write_perm {
+        return false;
+    }
+    
+    // Check execute permission for directories
+    if metadata.file_type == crate::fs::FileType::Directory && !exec_perm {
+        return false;
+    }
+    
+    true
+}
+
 /// Close a file descriptor
 fn sys_close(fd: i32) -> SyscallResult {
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    let process = match process_manager.get_process(current_pid) {
+        Some(p) => p,
+        None => return Err(SyscallError::InvalidSyscall),
+    };
+
     // Security validation
     SecurityValidator::validate_fd(fd)?;
 
@@ -552,14 +912,18 @@ fn sys_close(fd: i32) -> SyscallResult {
         return Err(SyscallError::InvalidArgument);
     }
 
+    // Check if file descriptor exists in process table
+    let vfs_fd = match process.file_descriptors.get(&(fd as u32)) {
+        Some(&vfs_fd) => vfs_fd,
+        None => return Err(SyscallError::BadFileDescriptor),
+    };
+
     // Close through VFS
-    match crate::fs::vfs().close(fd) {
+    match crate::fs::vfs().close(vfs_fd) {
         Ok(()) => {
             // Remove from process file descriptor table
-            let process_manager = crate::process::get_process_manager();
-            let _current_pid = process_manager.current_process();
-
-            // TODO: Remove FD from process table
+            process.file_descriptors.remove(&(fd as u32));
+            process.file_offsets.remove(&(fd as u32));
             Ok(0)
         },
         Err(fs_error) => {
@@ -574,6 +938,19 @@ fn sys_close(fd: i32) -> SyscallResult {
 
 /// Read from file descriptor
 fn sys_read(fd: i32, buf: u64, count: u64) -> SyscallResult {
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    let process = match process_manager.get_process(current_pid) {
+        Some(p) => p,
+        None => return Err(SyscallError::InvalidSyscall),
+    };
+
     // Security validation
     SecurityValidator::validate_fd(fd)?;
     SecurityValidator::validate_user_ptr(buf, count, true)?;
@@ -592,11 +969,21 @@ fn sys_read(fd: i32, buf: u64, count: u64) -> SyscallResult {
             Err(SyscallError::InvalidArgument)
         },
         _ => {
+            // Get VFS file descriptor from process table
+            let vfs_fd = match process.file_descriptors.get(&(fd as u32)) {
+                Some(&vfs_fd) => vfs_fd,
+                None => return Err(SyscallError::BadFileDescriptor),
+            };
+
             // Regular file descriptor
             let mut buffer = vec![0u8; read_count];
 
-            match crate::fs::vfs().read(fd, &mut buffer) {
+            match crate::fs::vfs().read(vfs_fd, &mut buffer) {
                 Ok(bytes_read) => {
+                    // Update file offset in process table
+                    let current_offset = process.file_offsets.get(&(fd as u32)).copied().unwrap_or(0);
+                    process.file_offsets.insert(fd as u32, current_offset + bytes_read as u64);
+
                     // Copy data to user space
                     if bytes_read > 0 {
                         SecurityValidator::copy_to_user(buf, &buffer[..bytes_read])?;
@@ -618,6 +1005,19 @@ fn sys_read(fd: i32, buf: u64, count: u64) -> SyscallResult {
 
 /// Write to file descriptor
 fn sys_write(fd: i32, buf: u64, count: u64) -> SyscallResult {
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    let process = match process_manager.get_process(current_pid) {
+        Some(p) => p,
+        None => return Err(SyscallError::InvalidSyscall),
+    };
+
     // Security validation
     SecurityValidator::validate_fd(fd)?;
     SecurityValidator::validate_user_ptr(buf, count, false)?;
@@ -642,9 +1042,21 @@ fn sys_write(fd: i32, buf: u64, count: u64) -> SyscallResult {
             Ok(write_count as u64)
         },
         _ => {
+            // Get VFS file descriptor from process table
+            let vfs_fd = match process.file_descriptors.get(&(fd as u32)) {
+                Some(&vfs_fd) => vfs_fd,
+                None => return Err(SyscallError::BadFileDescriptor),
+            };
+
             // Regular file descriptor
-            match crate::fs::vfs().write(fd, &data) {
-                Ok(bytes_written) => Ok(bytes_written as u64),
+            match crate::fs::vfs().write(vfs_fd, &data) {
+                Ok(bytes_written) => {
+                    // Update file offset in process table
+                    let current_offset = process.file_offsets.get(&(fd as u32)).copied().unwrap_or(0);
+                    process.file_offsets.insert(fd as u32, current_offset + bytes_written as u64);
+
+                    Ok(bytes_written as u64)
+                },
                 Err(fs_error) => {
                     let syscall_error = match fs_error {
                         crate::fs::FsError::BadFileDescriptor => SyscallError::BadFileDescriptor,
@@ -662,9 +1074,108 @@ fn sys_write(fd: i32, buf: u64, count: u64) -> SyscallResult {
 
 /// Change program break (heap management)
 fn sys_brk(addr: u64) -> SyscallResult {
-    // Production: heap management
-    // TODO: Implement heap management
-    Ok(addr)
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Validate current process exists
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+    
+    let process = match process_manager.get_process(current_pid) {
+        Some(p) => p,
+        None => return Err(SyscallError::InvalidSyscall),
+    };
+    
+    let current_heap_end = process.memory.heap_start + process.memory.heap_size;
+    
+    // If addr is 0, return current break
+    if addr == 0 {
+        return Ok(current_heap_end);
+    }
+    
+    // Validate new break address
+    if addr < process.memory.heap_start {
+        return Err(SyscallError::InvalidArgument);
+    }
+    
+    // Check if we're expanding or shrinking the heap
+    if addr > current_heap_end {
+        // Expand heap
+        let expansion_size = addr - current_heap_end;
+        
+        // Limit heap expansion to prevent abuse (max 1GB heap)
+        if process.memory.heap_size + expansion_size > 1024 * 1024 * 1024 {
+            return Err(SyscallError::OutOfMemory);
+        }
+        
+        // Use memory manager to allocate additional heap space
+        match expand_process_heap(current_pid, expansion_size) {
+            Ok(()) => {
+                process.memory.heap_size += expansion_size;
+                Ok(addr)
+            },
+            Err(_) => Err(SyscallError::OutOfMemory)
+        }
+    } else if addr < current_heap_end {
+        // Shrink heap
+        let shrink_size = current_heap_end - addr;
+        
+        // Use memory manager to deallocate heap space
+        match shrink_process_heap(current_pid, shrink_size) {
+            Ok(()) => {
+                process.memory.heap_size -= shrink_size;
+                Ok(addr)
+            },
+            Err(_) => Err(SyscallError::InvalidArgument)
+        }
+    } else {
+        // No change
+        Ok(addr)
+    }
+}
+
+/// Expand process heap by the specified size
+fn expand_process_heap(pid: Pid, size: u64) -> Result<(), &'static str> {
+    use crate::memory::{allocate_memory, MemoryRegionType, MemoryProtection};
+    
+    let process_manager = crate::process::get_process_manager();
+    let _process = process_manager.get_process(pid).ok_or("Process not found")?;
+    
+    // Allocate new heap memory
+    let protection = MemoryProtection {
+        readable: true,
+        writable: true,
+        executable: false,
+        user_accessible: true,
+        cache_disabled: false,
+        write_through: false,
+        copy_on_write: false,
+        guard_page: false,
+    };
+    
+    match allocate_memory(size as usize, MemoryRegionType::UserHeap, protection) {
+        Ok(_virt_addr) => Ok(()),
+        Err(_) => Err("Failed to allocate heap memory")
+    }
+}
+
+/// Shrink process heap by the specified size
+fn shrink_process_heap(pid: Pid, size: u64) -> Result<(), &'static str> {
+    use crate::memory::deallocate_memory;
+    
+    let process_manager = crate::process::get_process_manager();
+    let process = process_manager.get_process(pid).ok_or("Process not found")?;
+    
+    // Calculate the address range to deallocate
+    let heap_end = process.memory.heap_start + process.memory.heap_size;
+    let dealloc_start = heap_end - size;
+    
+    // Deallocate heap pages
+    match deallocate_memory(x86_64::VirtAddr::new(dealloc_start)) {
+        Ok(()) => Ok(()),
+        Err(_) => Err("Failed to deallocate heap memory")
+    }
 }
 
 /// Memory map
@@ -742,9 +1253,9 @@ fn sys_gettime() -> SyscallResult {
     Ok(uptime_us)
 }
 
-/// Set process priority
+/// Set process priority with privilege validation
 fn sys_setpriority(priority: i32) -> SyscallResult {
-    let _new_priority = match priority {
+    let new_priority = match priority {
         0 => crate::scheduler::Priority::RealTime,
         1 => crate::scheduler::Priority::High,
         2 => crate::scheduler::Priority::Normal,
@@ -754,29 +1265,116 @@ fn sys_setpriority(priority: i32) -> SyscallResult {
     };
 
     let process_manager = crate::process::get_process_manager();
-    let _current_pid = process_manager.current_process();
+    let current_pid = process_manager.current_process();
 
-    // TODO: Update priority in process manager
-    // For now, just validate the priority value
-    Ok(0)
+    // Check privilege requirements for different priority levels
+    match new_priority {
+        crate::scheduler::Priority::RealTime => {
+            // Real-time priority requires system admin capability
+            if !crate::security::check_permission(current_pid, "sys_admin") {
+                return Err(SyscallError::PermissionDenied);
+            }
+        },
+        crate::scheduler::Priority::High => {
+            // High priority requires elevated privileges
+            if let Some(ctx) = crate::security::get_context(current_pid) {
+                if ctx.level == crate::security::SecurityLevel::User && !ctx.is_root() {
+                    return Err(SyscallError::PermissionDenied);
+                }
+            }
+        },
+        _ => {
+            // Normal, Low, and Idle priorities are available to all processes
+        }
+    }
+
+    // Validate current privilege level
+    if let Some(ctx) = crate::security::get_context(current_pid) {
+        // Ensure privilege level is appropriate for the requested priority
+        match (ctx.level, new_priority) {
+            (crate::security::SecurityLevel::User, crate::scheduler::Priority::RealTime) => {
+                return Err(SyscallError::PermissionDenied);
+            },
+            _ => {}
+        }
+    }
+
+    // Update priority in process control block
+    match process_manager.get_process(current_pid) {
+        Some(process) => {
+            process.priority = new_priority;
+
+            // Notify scheduler of priority change
+            crate::scheduler::update_process_priority(current_pid, new_priority);
+
+            Ok(0)
+        },
+        None => Err(SyscallError::InvalidSyscall)
+    }
 }
 
 /// Get process priority
 fn sys_getpriority() -> SyscallResult {
-    // TODO: Get actual process priority
-    Ok(2) // Return Normal priority as default
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+
+    // Validate that we have a valid process ID
+    if current_pid == 0 {
+        return Err(SyscallError::InvalidSyscall);
+    }
+
+    // Get priority from process control block
+    match process_manager.get_process(current_pid) {
+        Some(process) => {
+            let priority_value = match process.priority {
+                crate::scheduler::Priority::RealTime => 0,
+                crate::scheduler::Priority::High => 1,
+                crate::scheduler::Priority::Normal => 2,
+                crate::scheduler::Priority::Low => 3,
+                crate::scheduler::Priority::Idle => 4,
+            };
+            Ok(priority_value)
+        },
+        None => Err(SyscallError::InvalidSyscall)
+    }
 }
 
-/// Memory unmap
+/// Memory unmap with privilege validation
 fn sys_munmap(addr: u64, length: u64) -> SyscallResult {
     // Security validation
     if length == 0 {
         return Err(SyscallError::InvalidArgument);
     }
 
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+
+    // Validate user space memory access
+    SecurityValidator::validate_user_ptr(addr, length, true)?;
+
+    // Check if process has permission to unmap memory
+    if let Some(ctx) = crate::security::get_context(current_pid) {
+        // Validate process isolation - can only unmap own memory
+        if let Err(_) = crate::security::validate_process_isolation(
+            current_pid, 
+            current_pid, 
+            "memory_access"
+        ) {
+            return Err(SyscallError::PermissionDenied);
+        }
+    }
+
     // Page-align the address and length
     let page_size = 4096u64;
     let aligned_addr = addr & !(page_size - 1);
+
+    // Additional security check: ensure address is in user space
+    const USER_SPACE_START: u64 = 0x0000_1000_0000;
+    const USER_SPACE_END: u64 = 0x0000_8000_0000;
+    
+    if aligned_addr < USER_SPACE_START || aligned_addr >= USER_SPACE_END {
+        return Err(SyscallError::InvalidAddress);
+    }
 
     // Deallocate memory
     match crate::memory::deallocate_memory(x86_64::VirtAddr::new(aligned_addr)) {
@@ -784,6 +1382,7 @@ fn sys_munmap(addr: u64, length: u64) -> SyscallResult {
         Err(memory_error) => {
             let syscall_error = match memory_error {
                 crate::memory::MemoryError::RegionNotFound => SyscallError::InvalidArgument,
+                crate::memory::MemoryError::PermissionDenied => SyscallError::PermissionDenied,
                 _ => SyscallError::InvalidArgument,
             };
             Err(syscall_error)
@@ -793,19 +1392,82 @@ fn sys_munmap(addr: u64, length: u64) -> SyscallResult {
 
 /// Get system information
 fn sys_uname(buf: u64) -> SyscallResult {
-    // Security validation
-    SecurityValidator::validate_user_ptr(buf, 390, true)?; // struct utsname is about 390 bytes
+    use core::mem::size_of;
 
-    // TODO: Properly format and copy struct utsname to user space
-    // For now, just validate the buffer
+    // struct utsname definition (POSIX compatible)
+    #[repr(C)]
+    struct UtsName {
+        sysname: [u8; 65],
+        nodename: [u8; 65],
+        release: [u8; 65],
+        version: [u8; 65],
+        machine: [u8; 65],
+    }
+
+    const UTSNAME_SIZE: usize = size_of::<UtsName>();
+
+    // Security validation
+    SecurityValidator::validate_user_ptr(buf, UTSNAME_SIZE as u64, true)?;
+
+    // Create and populate utsname structure
+    let mut utsname = UtsName {
+        sysname: [0; 65],
+        nodename: [0; 65],
+        release: [0; 65],
+        version: [0; 65],
+        machine: [0; 65],
+    };
+
+    // Fill in system information
+    copy_str_to_array(&mut utsname.sysname, "RustOS");
+    copy_str_to_array(&mut utsname.nodename, "rustos-node");
+    copy_str_to_array(&mut utsname.release, env!("CARGO_PKG_VERSION"));
+    copy_str_to_array(&mut utsname.version, "RustOS Production Kernel");
+    copy_str_to_array(&mut utsname.machine, "x86_64");
+
+    // Copy to user space
+    let utsname_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &utsname as *const _ as *const u8,
+            UTSNAME_SIZE
+        )
+    };
+
+    SecurityValidator::copy_to_user(buf, utsname_bytes)?;
     Ok(0)
+}
+
+/// Helper function to copy string to fixed-size array
+fn copy_str_to_array(dest: &mut [u8], src: &str) {
+    let bytes = src.as_bytes();
+    let copy_len = core::cmp::min(bytes.len(), dest.len() - 1);
+    dest[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    dest[copy_len] = 0; // Null terminator
 }
 
 /// Get current process ID (production)
 fn get_current_pid() -> Pid {
-    // Production: get from scheduler or default to 1
-    // TODO: Hook up real scheduler PID when available
-    1
+    // Get current PID from process manager
+    let process_manager = crate::process::get_process_manager();
+    let current_pid = process_manager.current_process();
+
+    // If no current process, return kernel PID (0)
+    if current_pid == 0 {
+        // This should only happen during early boot or kernel threads
+        0
+    } else {
+        current_pid
+    }
+}
+
+/// Get current working directory for a process
+fn get_process_cwd(pid: Pid) -> Option<String> {
+    let process_manager = crate::process::get_process_manager();
+
+    match process_manager.get_process(pid) {
+        Some(process) => process.cwd.clone(),
+        None => None,
+    }
 }
 
 /// Get system call statistics

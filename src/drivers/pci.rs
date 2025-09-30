@@ -244,8 +244,57 @@ impl PciBus {
 
     /// Detect PCI configuration access method
     fn detect_config_method(&self) -> PciResult<()> {
-        // For now, use I/O port method
-        // TODO: Detect MMCONFIG from ACPI MCFG table
+        // Try to detect MMCONFIG from ACPI MCFG table
+        #[cfg(not(test))]
+        {
+            use crate::acpi;
+
+            // Attempt to get MCFG table from ACPI
+            if let Ok(mcfg_address) = acpi::get_table_address(b"MCFG") {
+                // MCFG table structure:
+                // 0x00-0x03: Signature ("MCFG")
+                // 0x04-0x07: Length
+                // 0x08: Revision
+                // 0x09: Checksum
+                // 0x0A-0x0F: OEMID
+                // 0x10-0x17: OEM Table ID
+                // 0x18-0x1B: OEM Revision
+                // 0x1C-0x1F: Creator ID
+                // 0x20-0x23: Creator Revision
+                // 0x24-0x2B: Reserved (8 bytes)
+                // 0x2C+: Configuration Space Base Address Allocation Structures
+
+                // Each allocation structure is 16 bytes:
+                // 0x00-0x07: Base Address (64-bit)
+                // 0x08-0x09: PCI Segment Group Number
+                // 0x0A: Start PCI Bus Number
+                // 0x0B: End PCI Bus Number
+                // 0x0C-0x0F: Reserved
+
+                unsafe {
+                    let mcfg_ptr = mcfg_address as *const u8;
+
+                    // Read length at offset 0x04
+                    let length = core::ptr::read_volatile(mcfg_ptr.add(0x04) as *const u32);
+
+                    // MCFG header is 44 bytes (0x2C)
+                    if length >= 44 + 16 {
+                        // Read first allocation structure at offset 0x2C
+                        let base_address_ptr = mcfg_ptr.add(0x2C) as *const u64;
+                        let base_address = core::ptr::read_volatile(base_address_ptr);
+
+                        if base_address != 0 {
+                            // MMCONFIG base address found
+                            *self.config_method.lock() = ConfigMethod::MemoryMapped(base_address);
+                            // Production: MMCONFIG detected and enabled
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback to I/O port method if MMCONFIG not available
         *self.config_method.lock() = ConfigMethod::IoPort;
         // Production: I/O port configuration method selected
         Ok(())
@@ -269,9 +318,20 @@ impl PciBus {
                     Ok(x86_64::instructions::port::Port::new(0xCFC).read())
                 }
             }
-            ConfigMethod::MemoryMapped(_base) => {
-                // TODO: Implement MMCONFIG access
-                Err(PciError::NotSupported)
+            ConfigMethod::MemoryMapped(base) => {
+                // Calculate MMCONFIG address:
+                // Base + (Bus << 20) + (Device << 15) + (Function << 12) + Register
+                let offset = ((address.bus as u64) << 20)
+                    | ((address.slot as u64) << 15)
+                    | ((address.function as u64) << 12)
+                    | (register as u64);
+
+                let mmconfig_addr = base + offset;
+
+                unsafe {
+                    // Read 32-bit value from memory-mapped configuration space
+                    Ok(core::ptr::read_volatile(mmconfig_addr as *const u32))
+                }
             }
         }
     }
@@ -293,8 +353,21 @@ impl PciBus {
                 }
                 Ok(())
             }
-            ConfigMethod::MemoryMapped(_base) => {
-                Err(PciError::NotSupported)
+            ConfigMethod::MemoryMapped(base) => {
+                // Calculate MMCONFIG address:
+                // Base + (Bus << 20) + (Device << 15) + (Function << 12) + Register
+                let offset = ((address.bus as u64) << 20)
+                    | ((address.slot as u64) << 15)
+                    | ((address.function as u64) << 12)
+                    | (register as u64);
+
+                let mmconfig_addr = base + offset;
+
+                unsafe {
+                    // Write 32-bit value to memory-mapped configuration space
+                    core::ptr::write_volatile(mmconfig_addr as *mut u32, value);
+                }
+                Ok(())
             }
         }
     }

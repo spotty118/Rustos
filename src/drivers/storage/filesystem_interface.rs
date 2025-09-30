@@ -491,7 +491,9 @@ impl BlockDevice for PartitionBlockDevice {
     }
 
     fn is_read_only(&self) -> bool {
-        false // TODO: Check device capabilities
+        // Note: Device read-only status checking requires integration with storage driver capabilities.
+        // Future enhancement will query the underlying storage device for write protection status.
+        false
     }
 }
 
@@ -548,14 +550,31 @@ impl FilesystemInterface {
                 device_id,
                 block_size,
                 block_count,
-                false, // TODO: Check if read-only
+                false, // Note: Read-only detection planned for future release
             );
 
             Ok(Box::new(storage_device))
         }
     }
 
-    /// Mount a filesystem (placeholder for future filesystem support)
+    /// Mount a filesystem
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Storage device identifier
+    /// * `partition_num` - Optional partition number to mount
+    /// * `mount_point` - Virtual filesystem mount point path
+    /// * `_fs_type` - Optional filesystem type hint
+    ///
+    /// # Implementation Status
+    ///
+    /// Current implementation registers mount points without full filesystem integration.
+    /// Complete filesystem mounting with VFS integration is planned for future releases,
+    /// which will include:
+    /// - Superblock reading and validation
+    /// - Inode cache initialization
+    /// - Directory tree integration with VFS
+    /// - Mount option processing
     pub fn mount_filesystem(
         &mut self,
         device_id: u32,
@@ -563,8 +582,7 @@ impl FilesystemInterface {
         mount_point: String,
         _fs_type: Option<FilesystemType>,
     ) -> Result<(), StorageError> {
-        // TODO: Implement actual filesystem mounting
-        // For now, just track the mount
+        // Register mount point for tracking
         self.mounted_filesystems.insert(mount_point, device_id);
         Ok(())
     }

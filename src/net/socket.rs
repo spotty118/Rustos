@@ -55,6 +55,19 @@ impl SocketAddress {
             port,
         }
     }
+
+    /// Create IPv6 socket address
+    pub fn ipv6(addr: [u8; 16], port: u16) -> Self {
+        Self {
+            address: NetworkAddress::IPv6(addr),
+            port,
+        }
+    }
+
+    /// Validate that address is either IPv4 or IPv6
+    pub fn is_valid(&self) -> bool {
+        matches!(self.address, NetworkAddress::IPv4(_) | NetworkAddress::IPv6(_))
+    }
 }
 
 impl fmt::Display for SocketAddress {
@@ -167,11 +180,12 @@ impl Socket {
             return Err(NetworkError::InvalidAddress);
         }
 
-        // Check if address is already in use
-        // TODO: Implement proper address checking
-        
+        // For UDP sockets, actually bind in the UDP stack
+        if self.socket_type == SocketType::Datagram {
+            crate::net::udp::udp_bind(address.address, address.port)?;
+        }
+
         self.local_address = Some(address);
-        // Production: socket bound silently
         Ok(())
     }
 
@@ -181,15 +195,17 @@ impl Socket {
             return Err(NetworkError::NotSupported);
         }
 
-        if self.local_address.is_none() {
-            return Err(NetworkError::InvalidAddress);
-        }
+        if let Some(local_addr) = self.local_address {
+            // Call TCP listen function
+            crate::net::tcp::tcp_listen(local_addr.address, local_addr.port)?;
 
-        self.state = SocketState::Listening;
-        self.pending_connections.clear();
-        
-        // Production: socket listening
-        Ok(())
+            self.state = SocketState::Listening;
+            self.pending_connections.clear();
+
+            Ok(())
+        } else {
+            Err(NetworkError::InvalidAddress)
+        }
     }
 
     /// Connect to remote address
@@ -201,17 +217,31 @@ impl Socket {
         self.remote_address = Some(address);
         self.state = SocketState::Connecting;
 
-        // TODO: Implement actual connection logic
         match self.socket_type {
             SocketType::Stream => {
-                // TCP connection
-                // Production: TCP connection established
-                // Simulate successful connection
-                self.state = SocketState::Connected;
+                // TCP connection - use real TCP stack
+                if let Some(local_addr) = self.local_address {
+                    // Call TCP connect function
+                    let _local_port = crate::net::tcp::tcp_connect(
+                        local_addr.address,
+                        address.address,
+                        address.port
+                    )?;
+                    self.state = SocketState::Connected;
+                } else {
+                    return Err(NetworkError::InvalidAddress);
+                }
             }
             SocketType::Datagram => {
                 // UDP "connection" (just sets default destination)
-                // Production: UDP association established
+                if let Some(local_addr) = self.local_address {
+                    crate::net::udp::udp_connect(
+                        local_addr.address,
+                        local_addr.port,
+                        address.address,
+                        address.port
+                    )?;
+                }
                 self.state = SocketState::Connected;
             }
             SocketType::Raw => {
@@ -246,15 +276,34 @@ impl Socket {
             return Err(NetworkError::BufferOverflow);
         }
 
-        // Add data to send buffer
-        self.send_buffer.extend(data.iter());
-        
-        // TODO: Implement actual packet transmission
-        let bytes_sent = data.len();
+        let bytes_sent = match self.socket_type {
+            SocketType::Stream => {
+                // TCP send - buffer the data (actual sending happens in TCP layer)
+                self.send_buffer.extend(data.iter());
+                // For now, return the buffered amount
+                // Real implementation would track when data is actually sent
+                data.len()
+            }
+            SocketType::Datagram => {
+                // UDP send - use real UDP stack
+                if let (Some(local_addr), Some(_remote_addr)) = (self.local_address, self.remote_address) {
+                    crate::net::udp::udp_send(
+                        local_addr.address,
+                        local_addr.port,
+                        data
+                    )?
+                } else {
+                    return Err(NetworkError::InvalidAddress);
+                }
+            }
+            SocketType::Raw => {
+                return Err(NetworkError::NotSupported);
+            }
+        };
+
         self.stats.bytes_sent += bytes_sent as u64;
         self.stats.packets_sent += 1;
 
-        // Production: data sent successfully
         Ok(bytes_sent)
     }
 
@@ -283,17 +332,27 @@ impl Socket {
     }
 
     /// Send data to specific address (UDP only)
-    pub fn send_to(&mut self, data: &[u8], _address: SocketAddress) -> NetworkResult<usize> {
+    pub fn send_to(&mut self, data: &[u8], address: SocketAddress) -> NetworkResult<usize> {
         if self.socket_type != SocketType::Datagram {
             return Err(NetworkError::NotSupported);
         }
 
-        // TODO: Implement UDP packet transmission
-        let bytes_sent = data.len();
+        // Real UDP packet transmission
+        let bytes_sent = if let Some(local_addr) = self.local_address {
+            crate::net::udp::udp_send_to(
+                local_addr.address,
+                local_addr.port,
+                address.address,
+                address.port,
+                data
+            )?
+        } else {
+            return Err(NetworkError::InvalidAddress);
+        };
+
         self.stats.bytes_sent += bytes_sent as u64;
         self.stats.packets_sent += 1;
 
-        // Production: datagram sent successfully
         Ok(bytes_sent)
     }
 
@@ -303,26 +362,28 @@ impl Socket {
             return Err(NetworkError::NotSupported);
         }
 
-        // TODO: Implement UDP packet reception with source address
-        let bytes_received = core::cmp::min(buffer.len(), self.recv_buffer.len());
-        
-        if bytes_received == 0 {
-            return Err(NetworkError::Timeout); // No data available
+        // Real UDP packet reception
+        if let Some(local_addr) = self.local_address {
+            if let Some((data, src_addr, src_port)) = crate::net::udp::udp_recv(
+                local_addr.address,
+                local_addr.port
+            )? {
+                let bytes_to_copy = core::cmp::min(buffer.len(), data.len());
+                buffer[..bytes_to_copy].copy_from_slice(&data[..bytes_to_copy]);
+
+                let source = SocketAddress::new(src_addr, src_port);
+
+                self.stats.bytes_received += bytes_to_copy as u64;
+                self.stats.packets_received += 1;
+
+                Ok((bytes_to_copy, source))
+            } else {
+                // No data available
+                Err(NetworkError::Timeout)
+            }
+        } else {
+            Err(NetworkError::InvalidAddress)
         }
-
-        // Copy data from receive buffer
-        for i in 0..bytes_received {
-            buffer[i] = self.recv_buffer.pop_front().unwrap();
-        }
-
-        // Return dummy source address for now
-        let source = SocketAddress::ipv4(192, 168, 1, 100, 12345);
-        
-        self.stats.bytes_received += bytes_received as u64;
-        self.stats.packets_received += 1;
-
-        // Production: datagram received successfully
-        Ok((bytes_received, source))
     }
 
     /// Close the socket
@@ -331,7 +392,20 @@ impl Socket {
             SocketState::Closed => return Ok(()),
             SocketState::Connected => {
                 self.state = SocketState::Closing;
-                // TODO: Implement proper connection teardown
+
+                // Implement proper TCP connection teardown
+                if self.socket_type == SocketType::Stream {
+                    if let (Some(local_addr), Some(remote_addr)) = (self.local_address, self.remote_address) {
+                        // Initiate TCP close sequence (FIN handshake)
+                        crate::net::tcp::tcp_close(
+                            local_addr.address,
+                            local_addr.port,
+                            remote_addr.address,
+                            remote_addr.port
+                        ).ok(); // Ignore errors during close
+                    }
+                }
+
                 self.state = SocketState::Closed;
             }
             _ => {

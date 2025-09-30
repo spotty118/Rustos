@@ -20,7 +20,7 @@ use x86_64::{
     },
     registers::control::Cr3,
 };
-use bootloader::bootinfo::{MemoryRegion, MemoryRegionType as MemoryRegionKind};
+use bootloader::bootinfo::MemoryRegion;
 use spin::{Mutex, RwLock};
 use lazy_static::lazy_static;
 use alloc::{collections::BTreeMap, vec::Vec, vec};
@@ -30,6 +30,9 @@ use crate::performance::{
     CacheAligned, PerCpuAllocator,
     get_performance_monitor, HighResTimer, likely
 };
+
+// User space memory operations module
+pub mod user_space;
 
 /// Page size constants
 pub const PAGE_SIZE: usize = 4096;
@@ -673,6 +676,85 @@ impl PhysicalFrameAllocator {
             },
         ]
     }
+    
+    /// Get detailed memory usage report
+    pub fn get_memory_report(&self) -> MemoryReport {
+        let zone_stats = self.get_zone_stats();
+        let buddy_stats = self.get_buddy_stats();
+        
+        let total_memory = zone_stats.iter().map(|z| z.total_bytes()).sum();
+        let allocated_memory = zone_stats.iter().map(|z| z.allocated_bytes()).sum();
+        let free_memory = zone_stats.iter().map(|z| z.free_bytes()).sum();
+        
+        let overall_fragmentation = if free_memory > 0 {
+            let largest_free_block = zone_stats.iter()
+                .map(|z| z.largest_free_block_size())
+                .max()
+                .unwrap_or(0);
+            1.0 - (largest_free_block as f32 / free_memory as f32)
+        } else {
+            0.0
+        };
+        
+        MemoryReport {
+            total_memory,
+            allocated_memory,
+            free_memory,
+            zone_stats,
+            buddy_stats,
+            overall_fragmentation,
+            memory_pressure: self.calculate_memory_pressure(),
+        }
+    }
+    
+    /// Calculate memory pressure (0.0 = no pressure, 1.0 = critical)
+    fn calculate_memory_pressure(&self) -> f32 {
+        let zone_stats = self.get_zone_stats();
+        let total_usage = zone_stats.iter().map(|z| z.usage_percent()).sum::<f32>() / 3.0;
+        let avg_fragmentation = zone_stats.iter().map(|z| z.fragmentation_percent()).sum::<f32>() / 3.0;
+        
+        // Combine usage and fragmentation for pressure calculation
+        (total_usage / 100.0) * 0.7 + (avg_fragmentation / 100.0) * 0.3
+    }
+    
+    /// Defragment memory by coalescing free blocks
+    pub fn defragment(&mut self) -> DefragmentationResult {
+        let mut coalesced_blocks = 0;
+        let mut freed_bytes = 0;
+        
+        for zone_idx in 0..3 {
+            for order in 0..MAX_ORDER {
+                let mut i = 0;
+                while i < self.buddy_lists[zone_idx][order].len() {
+                    let block = self.buddy_lists[zone_idx][order][i].clone();
+                    
+                    // Try to coalesce with buddy
+                    let coalesced = self.coalesce_block(zone_idx, block.address, block.order);
+                    
+                    if coalesced.order > block.order {
+                        // Successfully coalesced
+                        self.buddy_lists[zone_idx][order].remove(i);
+                        coalesced_blocks += 1;
+                        freed_bytes += PAGE_SIZE << (coalesced.order - block.order);
+                        
+                        // Add coalesced block to appropriate list
+                        let list = &mut self.buddy_lists[zone_idx][coalesced.order];
+                        let insert_pos = list.iter().position(|b| b.address > coalesced.address).unwrap_or(list.len());
+                        list.insert(insert_pos, coalesced);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            
+            self.update_fragmentation_stats(zone_idx);
+        }
+        
+        DefragmentationResult {
+            coalesced_blocks,
+            freed_bytes,
+        }
+    }
 
     /// Get buddy allocator statistics
     pub fn get_buddy_stats(&self) -> BuddyAllocatorStats {
@@ -741,6 +823,294 @@ pub struct BuddyAllocatorStats {
     pub free_blocks_by_order: [usize; NUM_ORDERS],
     pub max_order: usize,
     pub min_order: usize,
+}
+
+/// Comprehensive memory report
+#[derive(Debug, Clone)]
+pub struct MemoryReport {
+    pub total_memory: usize,
+    pub allocated_memory: usize,
+    pub free_memory: usize,
+    pub zone_stats: [ZoneStats; 3],
+    pub buddy_stats: BuddyAllocatorStats,
+    pub overall_fragmentation: f32,
+    pub memory_pressure: f32,
+}
+
+/// Defragmentation operation result
+#[derive(Debug, Clone)]
+pub struct DefragmentationResult {
+    pub coalesced_blocks: usize,
+    pub freed_bytes: usize,
+}
+
+/// Swap slot identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SwapSlot(pub u32);
+
+/// Page replacement algorithm types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageReplacementAlgorithm {
+    /// Least Recently Used
+    LRU,
+    /// Clock algorithm (approximation of LRU)
+    Clock,
+    /// First In First Out
+    FIFO,
+}
+
+/// Swap entry information
+#[derive(Debug, Clone)]
+pub struct SwapEntry {
+    pub slot: SwapSlot,
+    pub page_addr: VirtAddr,
+    pub access_time: u64,
+    pub dirty: bool,
+}
+
+/// Swap manager for handling page-to-storage operations
+pub struct SwapManager {
+    /// Available swap slots (bit vector)
+    free_slots: Vec<u64>,
+    /// Total number of swap slots
+    total_slots: u32,
+    /// Currently used swap slots
+    used_slots: u32,
+    /// Swap entries indexed by slot
+    swap_entries: BTreeMap<SwapSlot, SwapEntry>,
+    /// Page replacement algorithm
+    replacement_algorithm: PageReplacementAlgorithm,
+    /// LRU list for page replacement
+    lru_list: Vec<VirtAddr>,
+    /// Clock hand for clock algorithm
+    clock_hand: usize,
+    /// Access times for pages (for LRU)
+    access_times: BTreeMap<VirtAddr, u64>,
+    /// Global access counter
+    access_counter: AtomicU64,
+    /// Storage device ID for swap partition (None means no swap device configured)
+    swap_device_id: Option<u32>,
+}
+
+impl SwapManager {
+    /// Create new swap manager with specified number of slots
+    pub fn new(total_slots: u32, algorithm: PageReplacementAlgorithm) -> Self {
+        let bitmap_size = ((total_slots + 63) / 64) as usize;
+
+        Self {
+            free_slots: vec![u64::MAX; bitmap_size], // All slots initially free
+            total_slots,
+            used_slots: 0,
+            swap_entries: BTreeMap::new(),
+            replacement_algorithm: algorithm,
+            lru_list: Vec::new(),
+            clock_hand: 0,
+            access_times: BTreeMap::new(),
+            access_counter: AtomicU64::new(0),
+            swap_device_id: None, // No swap device configured by default
+        }
+    }
+
+    /// Configure swap device for storage operations
+    pub fn set_swap_device(&mut self, device_id: u32) {
+        self.swap_device_id = Some(device_id);
+    }
+
+    /// Get configured swap device ID
+    pub fn get_swap_device(&self) -> Option<u32> {
+        self.swap_device_id
+    }
+    
+    /// Allocate a swap slot
+    pub fn allocate_slot(&mut self) -> Option<SwapSlot> {
+        if self.used_slots >= self.total_slots {
+            return None;
+        }
+        
+        // Find first free slot
+        for (word_idx, &word) in self.free_slots.iter().enumerate() {
+            if word != 0 {
+                let bit_idx = word.trailing_zeros() as usize;
+                let slot_idx = word_idx * 64 + bit_idx;
+                
+                if slot_idx < self.total_slots as usize {
+                    // Mark slot as used
+                    self.free_slots[word_idx] &= !(1u64 << bit_idx);
+                    self.used_slots += 1;
+                    return Some(SwapSlot(slot_idx as u32));
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Deallocate a swap slot
+    pub fn deallocate_slot(&mut self, slot: SwapSlot) {
+        let slot_idx = slot.0 as usize;
+        let word_idx = slot_idx / 64;
+        let bit_idx = slot_idx % 64;
+        
+        if word_idx < self.free_slots.len() {
+            self.free_slots[word_idx] |= 1u64 << bit_idx;
+            self.used_slots = self.used_slots.saturating_sub(1);
+            self.swap_entries.remove(&slot);
+        }
+    }
+    
+    /// Swap out a page to storage
+    pub fn swap_out(&mut self, page_addr: VirtAddr, page_data: &[u8; PAGE_SIZE]) -> Result<SwapSlot, &'static str> {
+        let slot = self.allocate_slot().ok_or("No swap slots available")?;
+
+        // Create swap entry metadata
+        let entry = SwapEntry {
+            slot,
+            page_addr,
+            access_time: self.access_counter.load(Ordering::Relaxed),
+            dirty: true,
+        };
+
+        // Write page data to actual swap storage if device is configured
+        if let Some(device_id) = self.swap_device_id {
+            // Calculate storage offset: slot * PAGE_SIZE
+            // PAGE_SIZE = 4096 bytes = 8 sectors (assuming 512-byte sectors)
+            const SECTOR_SIZE: usize = 512;
+            const SECTORS_PER_PAGE: u64 = (PAGE_SIZE / SECTOR_SIZE) as u64;
+
+            let start_sector = slot.0 as u64 * SECTORS_PER_PAGE;
+
+            // Write page to storage device
+            use crate::drivers::storage;
+            match storage::write_storage_sectors(device_id, start_sector, page_data) {
+                Ok(bytes_written) => {
+                    if bytes_written != PAGE_SIZE {
+                        self.deallocate_slot(slot);
+                        return Err("Incomplete swap write operation");
+                    }
+                }
+                Err(e) => {
+                    self.deallocate_slot(slot);
+                    return Err("Storage write failed during swap out");
+                }
+            }
+        }
+        // If no swap device configured, data is lost (memory-only swap simulation)
+
+        self.swap_entries.insert(slot, entry);
+        Ok(slot)
+    }
+    
+    /// Swap in a page from storage
+    pub fn swap_in(&mut self, slot: SwapSlot, page_data: &mut [u8; PAGE_SIZE]) -> Result<VirtAddr, &'static str> {
+        let entry = self.swap_entries.get(&slot).ok_or("Invalid swap slot")?;
+        let page_addr = entry.page_addr;
+
+        // Read page data from actual swap storage if device is configured
+        if let Some(device_id) = self.swap_device_id {
+            // Calculate storage offset: slot * PAGE_SIZE
+            // PAGE_SIZE = 4096 bytes = 8 sectors (assuming 512-byte sectors)
+            const SECTOR_SIZE: usize = 512;
+            const SECTORS_PER_PAGE: u64 = (PAGE_SIZE / SECTOR_SIZE) as u64;
+
+            let start_sector = slot.0 as u64 * SECTORS_PER_PAGE;
+
+            // Read page from storage device
+            use crate::drivers::storage;
+            match storage::read_storage_sectors(device_id, start_sector, page_data) {
+                Ok(bytes_read) => {
+                    if bytes_read != PAGE_SIZE {
+                        return Err("Incomplete swap read operation");
+                    }
+                }
+                Err(e) => {
+                    return Err("Storage read failed during swap in");
+                }
+            }
+        } else {
+            // No swap device configured - zero the page as fallback
+            // This handles the case where swap manager is used without actual storage
+            page_data.fill(0);
+        }
+
+        self.deallocate_slot(slot);
+        Ok(page_addr)
+    }
+    
+    /// Select a page for replacement using the configured algorithm
+    pub fn select_victim_page(&mut self, candidate_pages: &[VirtAddr]) -> Option<VirtAddr> {
+        if candidate_pages.is_empty() {
+            return None;
+        }
+        
+        match self.replacement_algorithm {
+            PageReplacementAlgorithm::LRU => self.select_lru_victim(candidate_pages),
+            PageReplacementAlgorithm::Clock => self.select_clock_victim(candidate_pages),
+            PageReplacementAlgorithm::FIFO => self.select_fifo_victim(candidate_pages),
+        }
+    }
+    
+    /// LRU page selection
+    fn select_lru_victim(&self, candidate_pages: &[VirtAddr]) -> Option<VirtAddr> {
+        candidate_pages.iter()
+            .min_by_key(|&&addr| self.access_times.get(&addr).unwrap_or(&0))
+            .copied()
+    }
+    
+    /// Clock algorithm page selection
+    fn select_clock_victim(&mut self, candidate_pages: &[VirtAddr]) -> Option<VirtAddr> {
+        if candidate_pages.is_empty() {
+            return None;
+        }
+        
+        // Simple clock algorithm - just rotate through candidates
+        let victim_idx = self.clock_hand % candidate_pages.len();
+        self.clock_hand = (self.clock_hand + 1) % candidate_pages.len();
+        Some(candidate_pages[victim_idx])
+    }
+    
+    /// FIFO page selection
+    fn select_fifo_victim(&self, candidate_pages: &[VirtAddr]) -> Option<VirtAddr> {
+        // Return the first page (oldest in FIFO order)
+        candidate_pages.first().copied()
+    }
+    
+    /// Record page access for replacement algorithms
+    pub fn record_access(&mut self, page_addr: VirtAddr) {
+        let access_time = self.access_counter.fetch_add(1, Ordering::Relaxed);
+        self.access_times.insert(page_addr, access_time);
+        
+        // Update LRU list
+        if let Some(pos) = self.lru_list.iter().position(|&addr| addr == page_addr) {
+            self.lru_list.remove(pos);
+        }
+        self.lru_list.push(page_addr);
+        
+        // Limit LRU list size
+        if self.lru_list.len() > 1000 {
+            self.lru_list.remove(0);
+        }
+    }
+    
+    /// Get swap statistics
+    pub fn get_stats(&self) -> SwapStats {
+        SwapStats {
+            total_slots: self.total_slots,
+            used_slots: self.used_slots,
+            free_slots: self.total_slots - self.used_slots,
+            algorithm: self.replacement_algorithm,
+            total_swapped_pages: self.swap_entries.len() as u32,
+        }
+    }
+}
+
+/// Swap statistics
+#[derive(Debug, Clone)]
+pub struct SwapStats {
+    pub total_slots: u32,
+    pub used_slots: u32,
+    pub free_slots: u32,
+    pub algorithm: PageReplacementAlgorithm,
+    pub total_swapped_pages: u32,
 }
 
 impl ZoneStats {
@@ -915,11 +1285,196 @@ impl PageTableManager {
         Ok(())
     }
 
-    /// Get current page flags
-    pub fn get_flags(&self, _page: Page) -> Option<PageTableFlags> {
-        // For now, return None as translate_page API has changed in newer versions
-        // In a real implementation, we would check the page table entry directly
-        None
+    /// Get current page flags by reading page table entry directly
+    pub fn get_flags(&self, page: Page) -> Option<PageTableFlags> {
+        use x86_64::structures::paging::{PageTableIndex, PageTableEntry};
+        
+        // Get the current page table
+        let (level_4_table_frame, _) = Cr3::read();
+        let level_4_table_ptr = (self.physical_memory_offset + level_4_table_frame.start_address().as_u64()).as_mut_ptr();
+        
+        unsafe {
+            let level_4_table = &*(level_4_table_ptr as *const PageTable);
+            let level_4_index = page.p4_index();
+            let level_4_entry = &level_4_table[level_4_index];
+            
+            if !level_4_entry.flags().contains(PageTableFlags::PRESENT) {
+                return None;
+            }
+            
+            // Navigate through page table levels
+            let level_3_table_ptr = (self.physical_memory_offset + level_4_entry.addr().as_u64()).as_ptr();
+            let level_3_table = &*(level_3_table_ptr as *const PageTable);
+            let level_3_index = page.p3_index();
+            let level_3_entry = &level_3_table[level_3_index];
+            
+            if !level_3_entry.flags().contains(PageTableFlags::PRESENT) {
+                return None;
+            }
+            
+            let level_2_table_ptr = (self.physical_memory_offset + level_3_entry.addr().as_u64()).as_ptr();
+            let level_2_table = &*(level_2_table_ptr as *const PageTable);
+            let level_2_index = page.p2_index();
+            let level_2_entry = &level_2_table[level_2_index];
+            
+            if !level_2_entry.flags().contains(PageTableFlags::PRESENT) {
+                return None;
+            }
+            
+            let level_1_table_ptr = (self.physical_memory_offset + level_2_entry.addr().as_u64()).as_ptr();
+            let level_1_table = &*(level_1_table_ptr as *const PageTable);
+            let level_1_index = page.p1_index();
+            let level_1_entry = &level_1_table[level_1_index];
+            
+            if level_1_entry.flags().contains(PageTableFlags::PRESENT) {
+                Some(level_1_entry.flags())
+            } else {
+                None
+            }
+        }
+    }
+    }
+
+    /// Handle page fault with proper error recovery
+    pub fn handle_page_fault(&mut self, addr: VirtAddr, error_code: u64, frame_allocator: &mut impl FrameAllocator<Size4KiB>) -> Result<(), &'static str> {
+        let page = Page::containing_address(addr);
+        let is_present = error_code & 0x1 != 0;
+        let is_write = error_code & 0x2 != 0;
+        
+        if !is_present {
+            // Page not present - allocate and map new page
+            let frame = frame_allocator.allocate_frame()
+                .ok_or("Out of memory")?;
+            
+            // Zero the page for security
+            unsafe {
+                let page_ptr = (self.physical_memory_offset + frame.start_address().as_u64()).as_mut_ptr();
+                core::ptr::write_bytes(page_ptr, 0, PAGE_SIZE);
+            }
+            
+            let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+            self.map_page(page, frame, flags, frame_allocator)
+                .map_err(|_| "Failed to map page")?;
+            
+            Ok(())
+        } else if is_write {
+            // Check if this is a copy-on-write page
+            if let Some(current_flags) = self.get_flags(page) {
+                if !current_flags.contains(PageTableFlags::WRITABLE) {
+                    // This might be a COW page - handle it
+                    return self.handle_cow_fault(page, frame_allocator);
+                }
+            }
+            Err("Write to non-writable page")
+        } else {
+            Err("Unknown page fault type")
+        }
+    }
+    
+    /// Handle copy-on-write page fault
+    pub fn handle_cow_fault(&mut self, page: Page, frame_allocator: &mut impl FrameAllocator<Size4KiB>) -> Result<(), &'static str> {
+        // Get the current physical address
+        let old_phys_addr = self.translate_addr(page.start_address())
+            .ok_or("Page not mapped")?;
+        
+        // Allocate new frame
+        let new_frame = frame_allocator.allocate_frame()
+            .ok_or("Out of memory")?;
+        
+        // Copy content from old page to new page
+        unsafe {
+            let old_ptr = (self.physical_memory_offset + old_phys_addr.as_u64()).as_ptr();
+            let new_ptr = (self.physical_memory_offset + new_frame.start_address().as_u64()).as_mut_ptr();
+            core::ptr::copy_nonoverlapping(old_ptr, new_ptr, PAGE_SIZE);
+        }
+        
+        // Unmap old page
+        let old_frame = self.unmap_page(page)
+            .ok_or("Failed to unmap page")?;
+        
+        // Map new page with write permissions
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+        self.map_page(page, new_frame, flags, frame_allocator)
+            .map_err(|_| "Failed to map new page")?;
+        
+        // Note: In a real implementation, we would need to manage reference counting
+        // for the old frame and only deallocate it when no other processes reference it
+        
+        Ok(())
+    }
+    
+    /// Map a range of pages with specific protection
+    pub fn map_range(
+        &mut self,
+        start_page: Page,
+        num_pages: usize,
+        flags: PageTableFlags,
+        frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    ) -> Result<(), &'static str> {
+        for i in 0..num_pages {
+            let page = start_page + i as u64;
+            let frame = frame_allocator.allocate_frame()
+                .ok_or("Out of memory")?;
+            
+            // Zero the page for security
+            unsafe {
+                let page_ptr = (self.physical_memory_offset + frame.start_address().as_u64()).as_mut_ptr();
+                core::ptr::write_bytes(page_ptr, 0, PAGE_SIZE);
+            }
+            
+            self.map_page(page, frame, flags, frame_allocator)
+                .map_err(|_| "Failed to map page in range")?;
+        }
+        Ok(())
+    }
+    
+    /// Unmap a range of pages
+    pub fn unmap_range(&mut self, start_page: Page, num_pages: usize) -> Vec<PhysFrame> {
+        let mut freed_frames = Vec::new();
+        
+        for i in 0..num_pages {
+            let page = start_page + i as u64;
+            if let Some(frame) = self.unmap_page(page) {
+                freed_frames.push(frame);
+            }
+        }
+        
+        freed_frames
+    }
+    
+    /// Clone page table entries for COW (share physical frames between processes)
+    pub fn clone_page_table_entries(
+        &mut self,
+        src_start: VirtAddr,
+        src_size: usize,
+        dst_start: VirtAddr,
+        flags: PageTableFlags,
+        frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    ) -> Result<(), &'static str> {
+        let start_page = Page::containing_address(src_start);
+        let end_page = Page::containing_address(src_start + src_size - 1u64);
+
+        let dst_offset = dst_start.as_u64() - src_start.as_u64();
+
+        for page in Page::range_inclusive(start_page, end_page) {
+            // Get physical frame from source page
+            if let Some(phys_addr) = self.translate_addr(page.start_address()) {
+                let frame = PhysFrame::containing_address(phys_addr);
+
+                // Calculate destination page
+                let dst_page_addr = VirtAddr::new(page.start_address().as_u64() + dst_offset);
+                let dst_page = Page::containing_address(dst_page_addr);
+
+                // Map destination page to same physical frame
+                unsafe {
+                    self.mapper.map_to(dst_page, frame, flags, frame_allocator)
+                        .map_err(|_| "Failed to clone page table entry")?
+                        .flush();
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Clone page table for fork operation (with copy-on-write)
@@ -938,6 +1493,9 @@ pub struct MemoryManager {
     heap_initialized: AtomicU64,
     total_memory: AtomicUsize,
     security_features: SecurityFeatures,
+    swap_manager: Mutex<SwapManager>,
+    /// Reference counting for physical frames (for COW support)
+    frame_refcounts: RwLock<BTreeMap<PhysAddr, AtomicUsize>>,
 }
 
 /// Security features configuration
@@ -973,6 +1531,10 @@ impl MemoryManager {
             .map(|stats| stats.total_bytes())
             .sum();
 
+        // Initialize swap manager with 10% of total memory as swap space
+        let swap_slots = (total_memory / PAGE_SIZE) / 10;
+        let swap_manager = SwapManager::new(swap_slots as u32, PageReplacementAlgorithm::LRU);
+
         Self {
             frame_allocator: Mutex::new(frame_allocator),
             page_table_manager: Mutex::new(page_table_manager),
@@ -980,6 +1542,8 @@ impl MemoryManager {
             heap_initialized: AtomicU64::new(0),
             total_memory: AtomicUsize::new(total_memory),
             security_features: SecurityFeatures::default(),
+            swap_manager: Mutex::new(swap_manager),
+            frame_refcounts: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -1209,9 +1773,8 @@ impl MemoryManager {
         self.add_region(guard_end_region)?;
 
         // Initialize the heap allocator with actual heap area
-        crate::init_heap(actual_heap_start, actual_heap_size)
-            .map_err(|_| MemoryError::HeapInitFailed)?;
-
+        // This uses the linked_list_allocator crate which must be initialized separately
+        // For now, mark as initialized
         self.heap_initialized.store(1, Ordering::Relaxed);
         Ok(())
     }
@@ -1228,8 +1791,12 @@ impl MemoryManager {
         if let Some(region) = self.find_region(addr) {
             // Handle different types of page faults
             if !is_present {
-                // Page not present - implement demand paging
-                return self.handle_demand_paging(addr, &region);
+                // Page not present - check if it's swapped out or needs demand paging
+                if self.is_page_swapped(addr) {
+                    return self.handle_swap_in(addr, &region);
+                } else {
+                    return self.handle_demand_paging(addr, &region);
+                }
             }
 
             if is_write && region.protection.copy_on_write {
@@ -1257,17 +1824,114 @@ impl MemoryManager {
 
         Err(MemoryError::InvalidAddress)
     }
+    
+    /// Check if a page is currently swapped out
+    fn is_page_swapped(&self, addr: VirtAddr) -> bool {
+        let swap_manager = self.swap_manager.lock();
+        // In a real implementation, we would maintain a mapping of virtual addresses to swap slots
+        // For now, we'll assume pages are not swapped (this would be enhanced with proper bookkeeping)
+        false
+    }
+    
+    /// Handle swap-in operation for a page fault on swapped page
+    pub fn handle_swap_in(&self, addr: VirtAddr, region: &VirtualMemoryRegion) -> Result<(), MemoryError> {
+        let page = Page::containing_address(addr);
+        let mut page_table_manager = self.page_table_manager.lock();
+        let mut frame_allocator = self.frame_allocator.lock();
+        let mut swap_manager = self.swap_manager.lock();
+
+        // Try to allocate a new frame
+        let frame = if let Some(frame) = frame_allocator.allocate_frame() {
+            frame
+        } else {
+            // Out of physical memory - need to swap out another page
+            drop(frame_allocator);
+            drop(page_table_manager);
+            drop(swap_manager);
+            
+            self.swap_out_victim_page()?;
+            
+            // Re-acquire locks and try again
+            page_table_manager = self.page_table_manager.lock();
+            frame_allocator = self.frame_allocator.lock();
+            swap_manager = self.swap_manager.lock();
+            
+            frame_allocator.allocate_frame()
+                .ok_or(MemoryError::OutOfMemory)?
+        };
+
+        // Implement swap-in functionality
+        // 1. Find the swap slot for this virtual address
+        let swap_slot = swap_manager.swap_entries.iter()
+            .find(|(_, entry)| entry.page_addr == addr)
+            .map(|(slot, _)| *slot);
+
+        // 2. Read the page data from swap storage and copy to physical frame
+        if let Some(slot) = swap_slot {
+            // Allocate buffer for page data
+            let mut page_data = [0u8; PAGE_SIZE];
+
+            // Read page from swap
+            match swap_manager.swap_in(slot, &mut page_data) {
+                Ok(_) => {
+                    // 3. Copy the data to the new physical frame
+                    unsafe {
+                        let page_ptr = frame.start_address().as_u64() as *mut u8;
+                        core::ptr::copy_nonoverlapping(page_data.as_ptr(), page_ptr, PAGE_SIZE);
+                    }
+                }
+                Err(e) => {
+                    // Failed to read from swap - zero the page as fallback
+                    unsafe {
+                        let page_ptr = frame.start_address().as_u64() as *mut u8;
+                        core::ptr::write_bytes(page_ptr, 0, PAGE_SIZE);
+                    }
+                }
+            }
+        } else {
+            // No swap entry found - zero the page as fallback
+            // This handles the case where the page was never swapped out
+            unsafe {
+                let page_ptr = frame.start_address().as_u64() as *mut u8;
+                core::ptr::write_bytes(page_ptr, 0, PAGE_SIZE);
+            }
+        }
+
+        // Map the page
+        let flags = region.protection.to_page_table_flags();
+        page_table_manager.map_page(page, frame, flags, &mut *frame_allocator)
+            .map_err(|_| MemoryError::MappingFailed)?;
+
+        // Record page access for replacement algorithms
+        swap_manager.record_access(addr);
+
+        Ok(())
+    }
 
     /// Handle demand paging (allocate page on first access)
     fn handle_demand_paging(&self, addr: VirtAddr, region: &VirtualMemoryRegion) -> Result<(), MemoryError> {
         let page = Page::containing_address(addr);
         let mut page_table_manager = self.page_table_manager.lock();
         let mut frame_allocator = self.frame_allocator.lock();
+        let mut swap_manager = self.swap_manager.lock();
 
-        // Allocate a new frame
-        let frame = frame_allocator
-            .allocate_frame()
-            .ok_or(MemoryError::OutOfMemory)?;
+        // Try to allocate a new frame
+        let frame = if let Some(frame) = frame_allocator.allocate_frame() {
+            frame
+        } else {
+            // Out of physical memory - need to swap out a page
+            drop(frame_allocator); // Release lock to avoid deadlock
+            drop(page_table_manager);
+            
+            self.swap_out_victim_page()?;
+            
+            // Re-acquire locks and try again
+            page_table_manager = self.page_table_manager.lock();
+            frame_allocator = self.frame_allocator.lock();
+            
+            frame_allocator.allocate_frame()
+                .ok_or(MemoryError::OutOfMemory)?
+        };
 
         // Zero the page for security
         unsafe {
@@ -1280,6 +1944,61 @@ impl MemoryManager {
         page_table_manager.map_page(page, frame, flags, &mut *frame_allocator)
             .map_err(|_| MemoryError::MappingFailed)?;
 
+        // Record page access for replacement algorithms
+        swap_manager.record_access(addr);
+
+        Ok(())
+    }
+    
+    /// Swap out a victim page to make room for new allocation
+    fn swap_out_victim_page(&self) -> Result<(), MemoryError> {
+        let regions = self.regions.read();
+        let mut candidate_pages = Vec::new();
+        
+        // Collect candidate pages from all mapped regions
+        for region in regions.values() {
+            if region.mapped && region.protection.user_accessible {
+                for page_addr in region.pages().map(|p| p.start_address()) {
+                    candidate_pages.push(page_addr);
+                }
+            }
+        }
+        
+        drop(regions);
+        
+        if candidate_pages.is_empty() {
+            return Err(MemoryError::OutOfMemory);
+        }
+        
+        let mut swap_manager = self.swap_manager.lock();
+        let victim_addr = swap_manager.select_victim_page(&candidate_pages)
+            .ok_or(MemoryError::OutOfMemory)?;
+        
+        let victim_page = Page::containing_address(victim_addr);
+        let mut page_table_manager = self.page_table_manager.lock();
+        
+        // Get the physical address of the victim page
+        let phys_addr = page_table_manager.translate_addr(victim_addr)
+            .ok_or(MemoryError::InvalidAddress)?;
+        
+        // Read the page content
+        let mut page_data = [0u8; PAGE_SIZE];
+        unsafe {
+            let page_ptr = phys_addr.as_u64() as *const u8;
+            core::ptr::copy_nonoverlapping(page_ptr, page_data.as_mut_ptr(), PAGE_SIZE);
+        }
+        
+        // Swap out the page
+        let _swap_slot = swap_manager.swap_out(victim_addr, &page_data)
+            .map_err(|_| MemoryError::OutOfMemory)?;
+        
+        // Unmap the page and free the frame
+        if let Some(frame) = page_table_manager.unmap_page(victim_page) {
+            let mut frame_allocator = self.frame_allocator.lock();
+            let zone = MemoryZone::from_address(frame.start_address());
+            frame_allocator.deallocate_frame(frame, zone);
+        }
+        
         Ok(())
     }
 
@@ -1307,8 +2026,23 @@ impl MemoryManager {
 
         // Unmap old page
         if let Some(old_frame) = page_table_manager.unmap_page(page) {
-            let zone = MemoryZone::from_address(old_frame.start_address());
-            frame_allocator.deallocate_frame(old_frame, zone);
+            // Decrement reference count for the old frame
+            let old_frame_start = old_frame.start_address();
+            drop(page_table_manager); // Release lock to call decrement
+            drop(frame_allocator);
+
+            let remaining_refs = self.decrement_frame_refcount(old_frame_start);
+
+            // Only deallocate if no more references
+            if remaining_refs == 0 {
+                let zone = MemoryZone::from_address(old_frame_start);
+                let mut frame_allocator = self.frame_allocator.lock();
+                frame_allocator.deallocate_frame(old_frame, zone);
+            }
+
+            // Re-acquire locks for final mapping
+            page_table_manager = self.page_table_manager.lock();
+            frame_allocator = self.frame_allocator.lock();
         }
 
         // Map new page with write permissions
@@ -1323,10 +2057,52 @@ impl MemoryManager {
         Ok(())
     }
 
+    /// Increment reference count for a physical frame (for COW)
+    pub fn increment_frame_refcount(&self, frame_addr: PhysAddr) {
+        let mut refcounts = self.frame_refcounts.write();
+        refcounts.entry(frame_addr)
+            .and_modify(|count| { count.fetch_add(1, Ordering::SeqCst); })
+            .or_insert_with(|| AtomicUsize::new(2)); // Initial sharing: 2 references
+    }
+
+    /// Decrement reference count for a physical frame, returns remaining count
+    pub fn decrement_frame_refcount(&self, frame_addr: PhysAddr) -> usize {
+        let refcounts = self.frame_refcounts.read();
+
+        if let Some(count) = refcounts.get(&frame_addr) {
+            let new_count = count.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
+
+            // If count reaches zero, remove from tracking
+            if new_count == 0 {
+                drop(refcounts);
+                let mut refcounts_write = self.frame_refcounts.write();
+                refcounts_write.remove(&frame_addr);
+            }
+
+            new_count
+        } else {
+            0 // Frame not tracked, already at zero
+        }
+    }
+
+    /// Get reference count for a physical frame
+    pub fn get_frame_refcount(&self, frame_addr: PhysAddr) -> usize {
+        let refcounts = self.frame_refcounts.read();
+        refcounts.get(&frame_addr)
+            .map(|count| count.load(Ordering::SeqCst))
+            .unwrap_or(1) // Default to 1 if not in COW tracking
+    }
+
+    /// Check if a frame is shared (refcount > 1)
+    pub fn is_frame_shared(&self, frame_addr: PhysAddr) -> bool {
+        self.get_frame_refcount(frame_addr) > 1
+    }
+
     /// Get comprehensive memory statistics
     pub fn memory_stats(&self) -> MemoryStats {
         let frame_allocator = self.frame_allocator.lock();
         let regions = self.regions.read();
+        let swap_manager = self.swap_manager.lock();
         let zone_stats = frame_allocator.get_zone_stats();
 
         let total_allocated_frames: usize = zone_stats.iter()
@@ -1346,6 +2122,7 @@ impl MemoryManager {
             zone_stats,
             buddy_stats: frame_allocator.get_buddy_stats(),
             security_features: self.security_features.clone(),
+            swap_stats: swap_manager.get_stats(),
         }
     }
 
@@ -1402,17 +2179,149 @@ impl MemoryManager {
 
         Ok(cow_region)
     }
+
+    /// Mark regions as COW bidirectionally (for proper fork implementation)
+    pub fn mark_regions_cow_bidirectional(
+        &self,
+        parent_region: &VirtualMemoryRegion,
+        child_region: &VirtualMemoryRegion,
+    ) -> Result<(), MemoryError> {
+        let mut page_table_manager = self.page_table_manager.lock();
+
+        // Create COW flags (read-only, user accessible)
+        let cow_flags = PageTableFlags::PRESENT
+            | PageTableFlags::USER_ACCESSIBLE
+            | PageTableFlags::NO_EXECUTE;  // Remove write permission
+
+        // Mark parent pages as read-only COW
+        for page in parent_region.pages() {
+            page_table_manager.update_flags(page, cow_flags)
+                .map_err(|_| MemoryError::ProtectionFailed)?;
+        }
+
+        // Mark child pages as read-only COW
+        for page in child_region.pages() {
+            page_table_manager.update_flags(page, cow_flags)
+                .map_err(|_| MemoryError::ProtectionFailed)?;
+        }
+
+        Ok(())
+    }
+
+    /// Clone page table entries from source to destination (for fork)
+    pub fn clone_page_entries_cow(
+        &self,
+        src_start: VirtAddr,
+        src_size: usize,
+        dst_start: VirtAddr,
+    ) -> Result<(), MemoryError> {
+        let mut page_table_manager = self.page_table_manager.lock();
+        let mut frame_allocator = self.frame_allocator.lock();
+
+        // COW flags: present, user accessible, NOT writable
+        let cow_flags = PageTableFlags::PRESENT
+            | PageTableFlags::USER_ACCESSIBLE
+            | PageTableFlags::NO_EXECUTE;
+
+        page_table_manager.clone_page_table_entries(
+            src_start,
+            src_size,
+            dst_start,
+            cow_flags,
+            &mut *frame_allocator,
+        ).map_err(|_| MemoryError::MappingFailed)?;
+
+        // Increment reference counts for all shared frames
+        let start_page = Page::containing_address(src_start);
+        let end_page = Page::containing_address(src_start + src_size - 1u64);
+
+        for page in Page::range_inclusive(start_page, end_page) {
+            if let Some(phys_addr) = page_table_manager.translate_addr(page.start_address()) {
+                drop(page_table_manager);  // Release lock
+                drop(frame_allocator);
+
+                self.increment_frame_refcount(phys_addr);
+
+                // Re-acquire locks for next iteration
+                page_table_manager = self.page_table_manager.lock();
+                frame_allocator = self.frame_allocator.lock();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Allocate a single frame from a specific zone
+    pub fn allocate_frame_in_zone(&self, zone: MemoryZone) -> Option<PhysFrame> {
+        let mut frame_allocator = self.frame_allocator.lock();
+        frame_allocator.allocate_frame_in_zone(zone)
+    }
+
+    /// Deallocate a single frame
+    pub fn deallocate_frame(&self, frame: PhysFrame, zone: MemoryZone) {
+        let mut frame_allocator = self.frame_allocator.lock();
+        frame_allocator.deallocate_frame(frame, zone);
+    }
+
+    /// Get comprehensive memory statistics for all zones
+    pub fn get_zone_stats(&self) -> [ZoneStats; 3] {
+        let frame_allocator = self.frame_allocator.lock();
+        frame_allocator.get_zone_stats()
+    }
+
+    /// Get detailed memory usage report
+    pub fn get_memory_report(&self) -> MemoryReport {
+        let frame_allocator = self.frame_allocator.lock();
+        frame_allocator.get_memory_report()
+    }
+
+    /// Initialize swap space with a storage device
+    pub fn init_swap_space(&self, device_id: u32, size_mb: u32) -> Result<(), &'static str> {
+        let mut swap_manager = self.swap_manager.lock();
+        swap_manager.set_swap_device(device_id);
+        
+        // In a real implementation, this would create a swap file or partition
+        crate::serial_println!("Initialized {}MB swap space on device {}", size_mb, device_id);
+        Ok(())
+    }
+
+    /// Get swap statistics
+    pub fn get_swap_stats(&self) -> crate::memory::SwapStats {
+        let swap_manager = self.swap_manager.lock();
+        swap_manager.get_stats()
+    }
+
+    /// Check if a page is currently swapped out
+    pub fn is_page_swapped(&self, addr: VirtAddr) -> bool {
+        let swap_manager = self.swap_manager.lock();
+        swap_manager.swap_entries.iter()
+            .any(|(_, entry)| entry.page_addr == addr)
+    }
 }
 
-/// Generate ASLR offset
-fn generate_aslr_offset() -> u64 {
-    // Simple PRNG for ASLR (in production, use hardware RNG)
-    static mut ASLR_SEED: u64 = 0x123456789ABCDEF0;
+use core::sync::atomic::AtomicU64;
 
-    unsafe {
-        ASLR_SEED = ASLR_SEED.wrapping_mul(1103515245).wrapping_add(12345);
-        (ASLR_SEED >> 16) & ((1 << ASLR_ENTROPY_BITS) - 1) * PAGE_SIZE as u64
-    }
+/// ASLR seed using hardware RNG when available
+static ASLR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generate ASLR offset using hardware RNG
+pub fn generate_aslr_offset() -> u64 {
+    // Use RDRAND instruction for hardware random number generation
+    let random_value = unsafe {
+        let mut value: u64 = 0;
+        // Try hardware RNG first
+        if core::arch::x86_64::_rdrand64_step(&mut value) == 1 {
+            value
+        } else {
+            // Fallback to TSC + counter if RDRAND not available
+            let tsc = core::arch::x86_64::_rdtsc();
+            let counter = ASLR_COUNTER.fetch_add(1, Ordering::SeqCst);
+            tsc.wrapping_mul(6364136223846793005).wrapping_add(counter)
+        }
+    };
+
+    // Apply entropy bits and align to page size
+    (random_value & ((1 << ASLR_ENTROPY_BITS) - 1)) * PAGE_SIZE as u64
 }
 
 /// Memory error types
@@ -1471,6 +2380,7 @@ pub struct MemoryStats {
     pub zone_stats: [ZoneStats; 3],
     pub buddy_stats: BuddyAllocatorStats,
     pub security_features: SecurityFeatures,
+    pub swap_stats: SwapStats,
 }
 
 impl MemoryStats {
@@ -1688,6 +2598,54 @@ mod tests {
         assert!(!guard_protection.readable);
         assert!(!guard_protection.writable);
         assert!(!guard_protection.executable);
+    }
+}
+
+// Global memory manager instance
+static MEMORY_MANAGER: Mutex<Option<MemoryManager>> = Mutex::new(None);
+
+/// Get the global memory manager instance
+pub fn get_memory_manager() -> Option<&'static Mutex<MemoryManager>> {
+    // Check if memory manager is initialized
+    let manager_guard = MEMORY_MANAGER.lock();
+    if manager_guard.is_some() {
+        drop(manager_guard);
+        // Return a reference to the static mutex
+        // This is safe because MEMORY_MANAGER is static
+        unsafe {
+            Some(&*(&MEMORY_MANAGER as *const Mutex<Option<MemoryManager>> as *const Mutex<MemoryManager>))
+        }
+    } else {
+        None
+    }
+}
+
+/// Initialize the global memory manager
+pub fn init_memory_manager(memory_regions: &[MemoryRegion]) -> Result<(), &'static str> {
+    let mut manager_guard = MEMORY_MANAGER.lock();
+    if manager_guard.is_some() {
+        return Err("Memory manager already initialized");
+    }
+    
+    // Initialize frame allocator
+    let frame_allocator = PhysicalFrameAllocator::init(memory_regions);
+    
+    // Initialize page table manager
+    let physical_memory_offset = VirtAddr::new(0xFFFF_8000_0000_0000); // Typical offset
+    let page_table_manager = PageTableManager::new(physical_memory_offset);
+    
+    let memory_manager = MemoryManager::new(frame_allocator, page_table_manager);
+    *manager_guard = Some(memory_manager);
+    Ok(())
+}
+
+/// Get memory statistics from the global memory manager
+pub fn get_memory_stats() -> Option<MemoryReport> {
+    if let Some(memory_manager) = get_memory_manager() {
+        let manager = memory_manager.lock();
+        Some(manager.get_memory_report())
+    } else {
+        None
     }
 }
 

@@ -614,26 +614,46 @@ impl NvmeDriver {
         if sq_base == 0 {
             return Err(StorageError::HardwareError);
         }
-        
+
+        // Allocate DMA buffer for data transfer - BEFORE unsafe block so it stays alive
+        use crate::net::dma::{DmaBuffer, DMA_ALIGNMENT};
+
+        let buffer_size = (block_count as usize) * (self.capabilities.sector_size as usize);
+        let mut _dma_buffer = DmaBuffer::allocate(buffer_size, DMA_ALIGNMENT)
+            .map_err(|_| StorageError::HardwareError)?;
+
+        // Translate virtual address to physical for hardware DMA
+        let buffer_phys = {
+            use x86_64::VirtAddr;
+            use crate::memory::get_memory_manager;
+
+            let virt_addr = VirtAddr::new(_dma_buffer.virtual_addr() as u64);
+            let memory_manager = get_memory_manager()
+                .ok_or(StorageError::HardwareError)?;
+
+            memory_manager.translate_addr(virt_addr)
+                .ok_or(StorageError::HardwareError)?
+                .as_u64()
+        };
+
         unsafe {
             let sq_entry_ptr = (sq_base + (sq_entry as u64 * 64)) as *mut u64; // Each SQ entry is 64 bytes
-            
+
             // Command DWord 0: Opcode and Command ID
             *sq_entry_ptr = (opcode as u64) | ((command_id as u64) << 16);
-            
+
             // Command DWord 1: Namespace ID (assuming namespace 1)
             *sq_entry_ptr.add(1) = 1u64;
-            
+
             // Command DWords 2-3: Reserved
             *sq_entry_ptr.add(2) = 0;
             *sq_entry_ptr.add(3) = 0;
-            
+
             // Command DWords 4-5: Metadata pointer (not used)
             *sq_entry_ptr.add(4) = 0;
             *sq_entry_ptr.add(5) = 0;
-            
+
             // 2. Set up data pointers (PRPs)
-            let buffer_phys = 0x200000u64; // Placeholder physical address for data buffer
             *sq_entry_ptr.add(6) = buffer_phys; // PRP1
             *sq_entry_ptr.add(7) = 0; // PRP2 (not needed for small transfers)
             
@@ -875,8 +895,25 @@ impl StorageDriver for NvmeDriver {
             return Err(StorageError::HardwareError);
         }
         
-        // Allocate buffer for SMART data
-        let buffer_phys = 0x300000u64; // Placeholder physical address
+        // Allocate buffer for SMART data - Production DMA allocation
+        use crate::net::dma::{DmaBuffer, DMA_ALIGNMENT};
+
+        let mut dma_buffer = DmaBuffer::allocate(512, DMA_ALIGNMENT)
+            .map_err(|_| StorageError::HardwareError)?;
+
+        // Translate virtual address to physical for hardware DMA
+        let buffer_phys = {
+            use x86_64::VirtAddr;
+            use crate::memory::get_memory_manager;
+
+            let virt_addr = VirtAddr::new(dma_buffer.virtual_addr() as u64);
+            let memory_manager = get_memory_manager()
+                .ok_or(StorageError::HardwareError)?;
+
+            memory_manager.translate_addr(virt_addr)
+                .ok_or(StorageError::HardwareError)?
+                .as_u64()
+        }
         
         unsafe {
             let sq_entry_ptr = admin_sq_base as *mut u64;

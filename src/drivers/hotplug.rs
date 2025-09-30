@@ -492,11 +492,58 @@ impl HotplugManager {
             return Ok(0);
         }
 
-        // TODO: Implement actual device scanning
-        // This would typically scan PCI bus, USB ports, etc.
-        
-        // Production: device scan in progress
-        Ok(0)
+        let mut new_devices = 0;
+
+        // Scan PCI bus for new devices
+        #[cfg(not(test))]
+        {
+            use crate::pci;
+            // Enumerate all PCI devices
+            match pci::enumerate_devices() {
+                Ok(devices) => {
+                    let current_devices = self.devices.read();
+
+                    for device in devices {
+                        // Check if device is already known
+                        let device_id = HotplugDeviceId::Pci {
+                            vendor_id: device.vendor_id,
+                            device_id: device.device_id,
+                            bus: device.bus,
+                            slot: device.slot,
+                            function: device.function,
+                        };
+
+                        // If device not in our registry, it's new
+                        if !current_devices.contains_key(&device_id) {
+                            new_devices += 1;
+
+                            // Drop read lock before acquiring write lock
+                            drop(current_devices);
+
+                            // Trigger device added event
+                            let event = HotplugEvent {
+                                event_type: HotplugEventType::DeviceAdded,
+                                device_id: device_id.clone(),
+                                timestamp: crate::time::get_system_time_ms(),
+                            };
+
+                            self.handle_event(event)?;
+
+                            // Re-acquire read lock for next iteration
+                            let current_devices = self.devices.read();
+                        }
+                    }
+                }
+                Err(_) => {
+                    // PCI enumeration failed - not critical
+                }
+            }
+        }
+
+        // USB scanning would go here (future enhancement)
+        // Other bus scanning (SATA hotplug, etc.) would go here
+
+        Ok(new_devices)
     }
 }
 
@@ -637,12 +684,8 @@ pub fn scan_devices() -> HotplugResult<usize> {
     HOTPLUG_MANAGER.scan_for_devices()
 }
 
-/// Get current time (placeholder)
+/// Get current time in milliseconds
 fn get_current_time() -> u64 {
-    // TODO: Get actual system time
-    static mut COUNTER: u64 = 0;
-    unsafe {
-        COUNTER += 1000;
-        COUNTER
-    }
+    // Use system time for hotplug event timestamps
+    crate::time::get_system_time_ms()
 }

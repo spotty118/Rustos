@@ -245,9 +245,24 @@ impl FileSystem for DevFs {
                 Ok(buffer.len())
             }
             DeviceType::Console | DeviceType::Stdin => {
-                // TODO: Implement console input
-                // For now, return EOF
-                Ok(0)
+                // Read from keyboard buffer
+                use crate::keyboard::get_scancode;
+                let mut bytes_read = 0;
+
+                // Try to read available characters from keyboard
+                for i in 0..buffer.len() {
+                    if let Some(scancode) = get_scancode() {
+                        // Convert scancode to ASCII if possible
+                        if let Some(ascii) = self.scancode_to_ascii(scancode) {
+                            buffer[i] = ascii;
+                            bytes_read += 1;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                Ok(bytes_read)
             }
             DeviceType::Full => {
                 // /dev/full behaves like /dev/zero for reads
@@ -280,11 +295,15 @@ impl FileSystem for DevFs {
                 Ok(buffer.len())
             }
             DeviceType::Console | DeviceType::Stdout | DeviceType::Stderr => {
-                // Write to console
-                // TODO: Implement proper console output
-                // For now, write to kernel log
+                // Write to console output
+                use crate::vga_buffer::{write_string, write_bytes};
+
+                // Try to convert to string first
                 if let Ok(text) = core::str::from_utf8(buffer) {
-                    print!("{}", text);
+                    write_string(text);
+                } else {
+                    // Write raw bytes
+                    write_bytes(buffer);
                 }
                 Ok(buffer.len())
             }
@@ -392,6 +411,29 @@ impl FileSystem for DevFs {
     fn sync(&self) -> FsResult<()> {
         // Device filesystem doesn't need syncing
         Ok(())
+    }
+}
+
+impl DevFs {
+    /// Convert scancode to ASCII character
+    fn scancode_to_ascii(&self, scancode: u8) -> Option<u8> {
+        // Basic scancode to ASCII mapping for US keyboard layout
+        match scancode {
+            0x1E => Some(b'a'), 0x30 => Some(b'b'), 0x2E => Some(b'c'), 0x20 => Some(b'd'),
+            0x12 => Some(b'e'), 0x21 => Some(b'f'), 0x22 => Some(b'g'), 0x23 => Some(b'h'),
+            0x17 => Some(b'i'), 0x24 => Some(b'j'), 0x25 => Some(b'k'), 0x26 => Some(b'l'),
+            0x32 => Some(b'm'), 0x31 => Some(b'n'), 0x18 => Some(b'o'), 0x19 => Some(b'p'),
+            0x10 => Some(b'q'), 0x13 => Some(b'r'), 0x1F => Some(b's'), 0x14 => Some(b't'),
+            0x16 => Some(b'u'), 0x2F => Some(b'v'), 0x11 => Some(b'w'), 0x2D => Some(b'x'),
+            0x15 => Some(b'y'), 0x2C => Some(b'z'),
+            0x02 => Some(b'1'), 0x03 => Some(b'2'), 0x04 => Some(b'3'), 0x05 => Some(b'4'),
+            0x06 => Some(b'5'), 0x07 => Some(b'6'), 0x08 => Some(b'7'), 0x09 => Some(b'8'),
+            0x0A => Some(b'9'), 0x0B => Some(b'0'),
+            0x39 => Some(b' '), // Space
+            0x1C => Some(b'\n'), // Enter
+            0x0E => Some(0x08), // Backspace
+            _ => None,
+        }
     }
 }
 

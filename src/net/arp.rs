@@ -1,6 +1,23 @@
 //! ARP (Address Resolution Protocol) implementation
 //!
-//! Provides comprehensive ARP table management with aging, updates, and security features.
+//! Provides comprehensive ARP table management with aging, updates, and security features
+//! conforming to RFC 826.
+//!
+//! # Features
+//!
+//! - RFC 826 compliant ARP implementation
+//! - Dynamic ARP table with aging and state management
+//! - Static ARP entry support for security
+//! - ARP request/reply processing
+//! - Gratuitous ARP handling
+//! - ARP cache timeout and entry eviction
+//! - Anti-spoofing security features
+//! - Comprehensive statistics and monitoring
+//!
+//! # Security
+//!
+//! The implementation includes security flags to detect and prevent ARP spoofing attacks.
+//! Static entries can be configured for critical infrastructure to prevent cache poisoning.
 
 use super::{NetworkAddress, NetworkResult, NetworkError};
 use alloc::{vec::Vec, collections::BTreeMap, string::String};
@@ -543,8 +560,8 @@ pub fn cleanup() {
 
 /// Get current time in milliseconds
 fn current_time_ms() -> u64 {
-    // TODO: Get actual system time
-    1000000000 + (unsafe { core::arch::x86_64::_rdtsc() } / 1000000)
+    // Use system time for ARP cache timeouts
+    crate::time::get_system_time_ms()
 }
 
 /// ARP request/reply processing functions
@@ -560,7 +577,25 @@ pub fn process_arp_request(
     update_arp_entry(sender_ip, sender_mac, interface.clone())?;
 
     // Check if we should reply (target IP is ours)
-    // TODO: Check against interface IP addresses
+    let network_stack = crate::net::network_stack();
+    let iface = network_stack.get_interface(&interface);
+
+    if let Some(iface) = iface {
+        // Check if target IP matches any of our interface IPs
+        if iface.ip_addresses.contains(&target_ip) {
+            // Target IP is ours - send ARP reply
+            let our_mac = iface.mac_address;
+            let our_ip = target_ip;
+
+            // Build and send ARP reply packet via ethernet module
+            match super::ethernet::create_arp_reply(our_mac, our_ip, sender_mac, sender_ip) {
+                Ok(packet) => {
+                    network_stack.send_packet(&interface, packet)?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
 
     Ok(())
 }
@@ -579,18 +614,83 @@ pub fn process_arp_reply(
 
 /// Send ARP request (would be called by higher layers)
 pub fn send_arp_request(target_ip: NetworkAddress, interface: String) -> NetworkResult<()> {
-    // TODO: Implement actual ARP request sending
-    // For now, just create an incomplete entry
-    let mut entries = ARP_TABLE.entries.write();
-    let mut stats = ARP_TABLE.stats.write();
+    // Create incomplete entry before sending request
+    let (sender_mac, sender_ip) = {
+        let mut entries = ARP_TABLE.entries.write();
+        let mut stats = ARP_TABLE.stats.write();
 
-    if !entries.contains_key(&target_ip) {
-        let entry = ArpEntry::new(target_ip, interface);
-        entries.insert(target_ip, entry);
-        stats.total_entries += 1;
-        stats.incomplete_entries += 1;
+        if !entries.contains_key(&target_ip) {
+            let entry = ArpEntry::new(target_ip, interface.clone());
+            entries.insert(target_ip, entry);
+            stats.total_entries += 1;
+            stats.incomplete_entries += 1;
+        }
+
+        stats.requests_sent += 1;
+
+        // Get interface MAC and IP from network stack
+        drop(entries);
+        drop(stats);
+
+        // Access network stack to get interface details
+        let network_stack = crate::net::network_stack();
+        let iface = network_stack.get_interface(&interface)
+            .ok_or(NetworkError::InvalidAddress)?;
+
+        let src_mac = iface.mac_address;
+        let src_ip = *iface.ip_addresses.first()
+            .ok_or(NetworkError::InvalidAddress)?;
+
+        (src_mac, src_ip)
+    };
+
+    // Build ARP request packet
+    let mut packet_data = alloc::vec::Vec::new();
+
+    // Ethernet header (14 bytes)
+    packet_data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); // Destination: broadcast
+    if let NetworkAddress::Mac(mac_bytes) = sender_mac {
+        packet_data.extend_from_slice(&mac_bytes); // Source MAC
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+    packet_data.extend_from_slice(&[0x08, 0x06]); // EtherType: ARP (0x0806)
+
+    // ARP packet (28 bytes)
+    packet_data.extend_from_slice(&[0x00, 0x01]); // Hardware type: Ethernet (1)
+    packet_data.extend_from_slice(&[0x08, 0x00]); // Protocol type: IPv4 (0x0800)
+    packet_data.push(6); // Hardware address length: 6
+    packet_data.push(4); // Protocol address length: 4
+    packet_data.extend_from_slice(&[0x00, 0x01]); // Operation: Request (1)
+
+    // Sender hardware address (6 bytes)
+    if let NetworkAddress::Mac(mac_bytes) = sender_mac {
+        packet_data.extend_from_slice(&mac_bytes);
+    } else {
+        return Err(NetworkError::InvalidAddress);
     }
 
-    stats.requests_sent += 1;
+    // Sender protocol address (4 bytes)
+    if let NetworkAddress::IPv4(ip_bytes) = sender_ip {
+        packet_data.extend_from_slice(&ip_bytes);
+    } else {
+        return Err(NetworkError::NotSupported); // ARP only works with IPv4
+    }
+
+    // Target hardware address (6 bytes) - unknown, all zeros
+    packet_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+    // Target protocol address (4 bytes)
+    if let NetworkAddress::IPv4(ip_bytes) = target_ip {
+        packet_data.extend_from_slice(&ip_bytes);
+    } else {
+        return Err(NetworkError::NotSupported); // ARP only works with IPv4
+    }
+
+    // Create packet buffer and send
+    let packet = super::PacketBuffer::from_data(packet_data);
+    let network_stack = crate::net::network_stack();
+    network_stack.send_packet(&interface, packet)?;
+
     Ok(())
 }

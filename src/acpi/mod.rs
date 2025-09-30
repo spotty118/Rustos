@@ -27,6 +27,8 @@ pub struct AcpiInfo {
     pub fadt: Option<FadtInfo>,
     /// Cached MCFG information
     pub mcfg: Option<McfgInfo>,
+    /// Cached HPET information
+    pub hpet: Option<HpetInfo>,
 }
 
 impl AcpiInfo {
@@ -49,6 +51,7 @@ impl AcpiInfo {
             madt: None,
             fadt: None,
             mcfg: None,
+            hpet: None,
         })
     }
 }
@@ -141,12 +144,68 @@ pub struct McfgInfo {
     pub entries: Vec<McfgEntry>,
 }
 
+/// HPET (High Precision Event Timer) information
+#[derive(Debug, Clone)]
+pub struct HpetInfo {
+    pub base_address: u64,
+    pub sequence_number: u16,
+    pub minimum_tick: u16,
+    pub page_protection: u8,
+}
+
+/// HPET table header structure
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct HpetTable {
+    pub header: SdtHeader,
+    pub event_timer_block_id: u32,
+    pub base_address: u64,
+    pub hpet_number: u8,
+    pub minimum_tick: u16,
+    pub page_protection: u8,
+}
+
 /// MADT (Multiple APIC Description Table) header structure
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct MadtHeader {
     pub local_apic_address: u32,
     pub flags: u32,
+}
+
+/// MADT Processor Entry structure
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+struct MadtProcessorEntry {
+    entry_type: u8,
+    length: u8,
+    processor_id: u8,
+    apic_id: u8,
+    flags: u32,
+}
+
+/// MADT IO APIC Entry structure
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+struct MadtIoApicEntry {
+    entry_type: u8,
+    length: u8,
+    id: u8,
+    reserved: u8,
+    address: u32,
+    global_system_interrupt_base: u32,
+}
+
+/// MADT Interrupt Override Entry structure
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+struct MadtInterruptOverrideEntry {
+    entry_type: u8,
+    length: u8,
+    bus_source: u8,
+    irq_source: u8,
+    global_system_interrupt: u32,
+    flags: u16,
 }
 
 lazy_static! {
@@ -444,6 +503,11 @@ pub fn mcfg() -> Option<McfgInfo> {
     ACPI_STATE.read().as_ref()?.mcfg.clone()
 }
 
+/// Get cached HPET information if previously parsed
+pub fn hpet() -> Option<HpetInfo> {
+    ACPI_STATE.read().as_ref()?.hpet.clone()
+}
+
 /// Parse the Multiple APIC Description Table (MADT) to extract interrupt controller topology
 pub fn parse_madt() -> Result<MadtInfo, &'static str> {
     let descriptor = find_table(b"APIC").ok_or("MADT (APIC) table not found")?;
@@ -474,26 +538,119 @@ pub fn parse_madt() -> Result<MadtInfo, &'static str> {
 }
 
 unsafe fn parse_madt_from_address(virt_addr: usize, table_length: usize) -> Result<MadtInfo, &'static str> {
-    if table_length < mem::size_of::<MadtHeader>() {
+    if table_length < mem::size_of::<SdtHeader>() + mem::size_of::<MadtHeader>() {
         return Err("MADT shorter than expected header size");
     }
     
-    // For now, return minimal implementation
+    // Validate checksum
+    let table_slice = slice::from_raw_parts(virt_addr as *const u8, table_length);
+    if !checksum_bytes(table_slice) {
+        return Err("MADT checksum validation failed");
+    }
+    
     let mut info = MadtInfo::default();
     
-    // Read basic MADT header  
-    let madt_header = &*(virt_addr as *const MadtHeader);
+    // Skip SDT header to get to MADT-specific data
+    let madt_data_start = virt_addr + mem::size_of::<SdtHeader>();
+    
+    // Read MADT header (local APIC address and flags)
+    let madt_header = &*(madt_data_start as *const MadtHeader);
     info.local_apic_address = madt_header.local_apic_address;
     info.flags = madt_header.flags;
     
-    // TODO: Parse MADT entries (processors, IO APICs, interrupt overrides)
-    // This is a simplified implementation for compilation
+    // Parse MADT entries
+    let entries_start = madt_data_start + mem::size_of::<MadtHeader>();
+    let entries_length = table_length - mem::size_of::<SdtHeader>() - mem::size_of::<MadtHeader>();
+    
+    let mut offset = 0;
+    while offset < entries_length {
+        if offset + 2 > entries_length {
+            break; // Not enough space for entry header
+        }
+        
+        let entry_ptr = (entries_start + offset) as *const u8;
+        let entry_type = *entry_ptr;
+        let entry_length = *(entry_ptr.add(1)) as usize;
+        
+        if entry_length < 2 || offset + entry_length > entries_length {
+            break; // Invalid entry length
+        }
+        
+        match entry_type {
+            MADT_ENTRY_PROCESSOR => {
+                if entry_length >= MADT_PROCESSOR_LEN {
+                    let processor_entry = &*(entry_ptr as *const MadtProcessorEntry);
+                    info.processors.push(ProcessorInfo {
+                        processor_id: processor_entry.processor_id,
+                        apic_id: processor_entry.apic_id,
+                        flags: processor_entry.flags,
+                    });
+                }
+            }
+            MADT_ENTRY_IO_APIC => {
+                if entry_length >= MADT_IO_APIC_LEN {
+                    let ioapic_entry = &*(entry_ptr as *const MadtIoApicEntry);
+                    info.io_apics.push(IoApic {
+                        id: ioapic_entry.id,
+                        address: ioapic_entry.address,
+                        global_system_interrupt_base: ioapic_entry.global_system_interrupt_base,
+                    });
+                }
+            }
+            MADT_ENTRY_INTERRUPT_OVERRIDE => {
+                if entry_length >= MADT_INTERRUPT_OVERRIDE_LEN {
+                    let override_entry = &*(entry_ptr as *const MadtInterruptOverrideEntry);
+                    info.interrupt_overrides.push(InterruptOverride {
+                        bus_source: override_entry.bus_source,
+                        irq_source: override_entry.irq_source,
+                        global_system_interrupt: override_entry.global_system_interrupt,
+                        flags: override_entry.flags,
+                    });
+                }
+            }
+            _ => {
+                // Unknown entry type, skip it
+            }
+        }
+        
+        offset += entry_length;
+    }
+    
+    Ok(info)
+}
+
+/// Parse the Fixed ACPI Description Table (FADT)
+pub fn parse_fadt() -> Result<FadtInfo, &'static str> {
+    let descriptor = find_table(b"FACP").ok_or("FADT (FACP) table not found")?;
+
+    let virt = descriptor
+        .virt_addr
+        .or_else(|| {
+            acpi_info()
+                .and_then(|info| info.physical_memory_offset)
+                .and_then(|offset| phys_to_virt(descriptor.phys_addr, offset))
+        })
+        .ok_or("Failed to map FADT virtual address")?;
+
+    // Get the length from the FADT header
+    let header = unsafe { &*(virt as *const SdtHeader) };
+    let table_length = header.length as usize;
+
+    let info = unsafe { parse_fadt_from_address(virt, table_length) }?;
+
+    {
+        let mut state = ACPI_STATE.write();
+        if let Some(acpi) = state.as_mut() {
+            acpi.fadt = Some(info.clone());
+        }
+    }
+
     Ok(info)
 }
 
 unsafe fn parse_fadt_from_address(virt_addr: usize, table_length: usize) -> Result<FadtInfo, &'static str> {
-    if table_length < mem::size_of::<SdtHeader>() {
-        return Err("FADT shorter than SDT header");
+    if table_length < mem::size_of::<SdtHeader>() + 44 {
+        return Err("FADT shorter than minimum required size");
     }
 
     let table_slice = slice::from_raw_parts(virt_addr as *const u8, table_length);
@@ -503,6 +660,7 @@ unsafe fn parse_fadt_from_address(virt_addr: usize, table_length: usize) -> Resu
 
     let mut info = FadtInfo::default();
 
+    // Parse basic FADT fields
     info.firmware_ctrl = read_u32(table_slice, FADT_FIRMWARE_CTRL_OFFSET);
     info.dsdt = read_u32(table_slice, FADT_DSDT_OFFSET);
     info.sci_interrupt = read_u16(table_slice, FADT_SCI_INTERRUPT_OFFSET);
@@ -512,7 +670,18 @@ unsafe fn parse_fadt_from_address(virt_addr: usize, table_length: usize) -> Resu
     info.pm1a_control_block = read_u32(table_slice, FADT_PM1A_CONTROL_OFFSET);
     info.pm_timer_block = read_u32(table_slice, FADT_PM_TIMER_BLOCK_OFFSET);
     info.flags = read_u32(table_slice, FADT_FLAGS_OFFSET);
-    info.x_pm_timer_block = read_u64(table_slice, FADT_X_PM_TIMER_BLOCK_OFFSET);
+
+    // Parse extended fields if table is long enough
+    if table_length >= FADT_X_PM_TIMER_BLOCK_OFFSET + 8 {
+        info.x_pm_timer_block = read_u64(table_slice, FADT_X_PM_TIMER_BLOCK_OFFSET);
+    }
+
+    // Validate critical fields
+    if let Some(sci_int) = info.sci_interrupt {
+        if sci_int > 255 {
+            return Err("Invalid SCI interrupt number in FADT");
+        }
+    }
 
     Ok(info)
 }
@@ -663,4 +832,114 @@ unsafe fn parse_mcfg_from_address(virt_addr: usize, table_length: usize) -> Resu
     }
 
     Ok(McfgInfo { entries })
+}
+
+/// Parse the HPET (High Precision Event Timer) table
+pub fn parse_hpet() -> Result<HpetInfo, &'static str> {
+    let descriptor = find_table(b"HPET").ok_or("HPET table not found")?;
+
+    let virt = descriptor
+        .virt_addr
+        .or_else(|| {
+            acpi_info()
+                .and_then(|info| info.physical_memory_offset)
+                .and_then(|offset| phys_to_virt(descriptor.phys_addr, offset))
+        })
+        .ok_or("Failed to map HPET virtual address")?;
+
+    let hpet_table = unsafe { &*(virt as *const HpetTable) };
+    
+    // Validate table signature
+    if &hpet_table.header.signature != b"HPET" {
+        return Err("Invalid HPET table signature");
+    }
+    
+    // Validate table length
+    if hpet_table.header.length < mem::size_of::<HpetTable>() as u32 {
+        return Err("HPET table too short");
+    }
+    
+    // Validate base address
+    if hpet_table.base_address == 0 {
+        return Err("Invalid HPET base address");
+    }
+    
+    let info = HpetInfo {
+        base_address: hpet_table.base_address,
+        sequence_number: hpet_table.hpet_number as u16,
+        minimum_tick: hpet_table.minimum_tick,
+        page_protection: hpet_table.page_protection,
+    };
+
+    // Cache the parsed information
+    {
+        let mut state = ACPI_STATE.write();
+        if let Some(acpi) = state.as_mut() {
+            acpi.hpet = Some(info.clone());
+        }
+    }
+
+    Ok(info)
+}
+
+/// Initialize and parse all available ACPI tables
+pub fn init_acpi_tables() -> Result<(), &'static str> {
+    // First enumerate all system description tables
+    let _tables = enumerate_system_description_tables()?;
+    
+    // Parse MADT for interrupt controller information
+    if let Err(e) = parse_madt() {
+        crate::serial_println!("Warning: Failed to parse MADT: {}", e);
+    }
+    
+    // Parse FADT for power management information
+    if let Err(e) = parse_fadt() {
+        crate::serial_println!("Warning: Failed to parse FADT: {}", e);
+    }
+    
+    // Parse MCFG for PCIe configuration
+    if let Err(e) = parse_mcfg() {
+        crate::serial_println!("Warning: Failed to parse MCFG: {}", e);
+    }
+    
+    // Parse HPET for high precision timer
+    if let Err(e) = parse_hpet() {
+        crate::serial_println!("Warning: Failed to parse HPET: {}", e);
+    }
+    
+    // Mark tables as fully initialized
+    mark_tables_initialized();
+    
+    Ok(())
+}
+
+/// Validate ACPI table integrity
+pub fn validate_acpi_integrity() -> Result<(), &'static str> {
+    let state = ACPI_STATE.read();
+    let info = state.as_ref().ok_or("ACPI not initialized")?;
+    
+    if !info.tables_initialized {
+        return Err("ACPI tables not fully initialized");
+    }
+    
+    let tables = info.tables.as_ref().ok_or("ACPI tables not enumerated")?;
+    
+    // Validate we have at least some basic tables
+    if tables.descriptors.is_empty() {
+        return Err("No ACPI tables found");
+    }
+    
+    // Check for critical tables
+    let has_madt = find_table(b"APIC").is_some();
+    let has_fadt = find_table(b"FACP").is_some();
+    
+    if !has_fadt {
+        return Err("Critical FADT table missing");
+    }
+    
+    if !has_madt {
+        crate::serial_println!("Warning: MADT table not found - interrupt routing may be limited");
+    }
+    
+    Ok(())
 }

@@ -1,8 +1,9 @@
 fn main() {
-    // Enable link-time optimization for release builds
-    #[cfg(not(debug_assertions))]
-    println!("cargo:rustc-link-arg=-flto");
+    // Note: boot.s assembly is not used for bootimage builds
+    // The bootloader crate handles boot setup automatically
+    // Custom boot assembly is only needed for manual multiboot builds
 
-    // Add the linker script for the target
-    println!("cargo:rustc-link-arg=--gc-sections");
+    // Rerun if these files change
+    println!("cargo:rerun-if-changed=src/boot.s");
+    println!("cargo:rerun-if-changed=link.ld");
 }

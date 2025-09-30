@@ -243,7 +243,16 @@ impl PciBusScanner {
             return Ok(());
         }
 
+        // Validate PCI configuration space access before scanning
+        if !self.validate_pci_access()? {
+            return Err("PCI configuration space access validation failed");
+        }
+
         self.scan_all_buses()?;
+        
+        // Validate discovered devices
+        self.validate_discovered_devices()?;
+        
         self.initialized = true;
         Ok(())
     }
@@ -381,6 +390,15 @@ impl PciBusScanner {
 
     /// Read a 32-bit configuration space register
     pub fn read_config_dword(&self, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+        // Use MMCONFIG if available
+        if MMCONFIG_ENABLED.load(Ordering::Acquire) {
+            if let Some(value) = self.read_config_dword_mmconfig(bus, device, function, offset) {
+                return value;
+            }
+            // Fall through to legacy I/O on error
+        }
+
+        // Legacy I/O port access
         let address = self.make_config_address(bus, device, function, offset);
 
         unsafe {
@@ -390,6 +408,32 @@ impl PciBusScanner {
             addr_port.write(address);
             data_port.read()
         }
+    }
+
+    /// Read via MMCONFIG (PCIe memory-mapped configuration space)
+    fn read_config_dword_mmconfig(&self, bus: u8, device: u8, function: u8, offset: u8) -> Option<u32> {
+        // Get MCFG info from ACPI
+        let mcfg = crate::acpi::mcfg()?;
+
+        // Find the MCFG entry that covers this bus
+        for entry in &mcfg.entries {
+            if bus >= entry.start_bus && bus <= entry.end_bus {
+                // Calculate MMCONFIG address
+                let addr = entry.base_address +
+                          ((bus as u64 - entry.start_bus as u64) << 20) + // Bus offset
+                          ((device as u64 & 0x1F) << 15) +                 // Device offset
+                          ((function as u64 & 0x07) << 12) +                // Function offset
+                          (offset as u64 & 0xFFC);                          // Register offset (aligned)
+
+                unsafe {
+                    // Use volatile read to prevent compiler optimization
+                    let value = core::ptr::read_volatile(addr as *const u32);
+                    return Some(value);
+                }
+            }
+        }
+
+        None
     }
 
     /// Read a 16-bit configuration space register
@@ -408,6 +452,15 @@ impl PciBusScanner {
 
     /// Write a 32-bit configuration space register
     pub fn write_config_dword(&self, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+        // Use MMCONFIG if available
+        if MMCONFIG_ENABLED.load(Ordering::Acquire) {
+            if self.write_config_dword_mmconfig(bus, device, function, offset, value) {
+                return;
+            }
+            // Fall through to legacy I/O on error
+        }
+
+        // Legacy I/O port access
         let address = self.make_config_address(bus, device, function, offset);
 
         unsafe {
@@ -417,6 +470,34 @@ impl PciBusScanner {
             addr_port.write(address);
             data_port.write(value);
         }
+    }
+
+    /// Write via MMCONFIG (PCIe memory-mapped configuration space)
+    fn write_config_dword_mmconfig(&self, bus: u8, device: u8, function: u8, offset: u8, value: u32) -> bool {
+        // Get MCFG info from ACPI
+        let Some(mcfg) = crate::acpi::mcfg() else {
+            return false;
+        };
+
+        // Find the MCFG entry that covers this bus
+        for entry in &mcfg.entries {
+            if bus >= entry.start_bus && bus <= entry.end_bus {
+                // Calculate MMCONFIG address
+                let addr = entry.base_address +
+                          ((bus as u64 - entry.start_bus as u64) << 20) + // Bus offset
+                          ((device as u64 & 0x1F) << 15) +                 // Device offset
+                          ((function as u64 & 0x07) << 12) +                // Function offset
+                          (offset as u64 & 0xFFC);                          // Register offset (aligned)
+
+                unsafe {
+                    // Use volatile write to prevent compiler optimization
+                    core::ptr::write_volatile(addr as *mut u32, value);
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Write a 16-bit configuration space register
@@ -502,29 +583,112 @@ pub fn init_pci() -> Result<(), &'static str> {
 }
 
 fn init_mmconfig_scanner(mcfg: &crate::acpi::McfgInfo) -> Result<(), &'static str> {
-    // For now, just validate the MCFG entries
+    // Validate MCFG entries thoroughly
     for entry in &mcfg.entries {
         if entry.base_address == 0 {
             return Err("Invalid MMCONFIG base address");
         }
-        
+
         if entry.end_bus < entry.start_bus {
             return Err("Invalid MMCONFIG bus range");
         }
-        
-        // Calculate the size needed for this segment
+
+        // Validate base address alignment (must be aligned to segment size)
         let bus_count = (entry.end_bus - entry.start_bus + 1) as u64;
-        let size_needed = bus_count * 256 * 8 * 4096; // buses * devices * functions * 4KB config space
-        
-        // Production: MMCONFIG size validation
-        let _ = size_needed; // Validate memory requirements
+        let segment_size = bus_count * 256 * 8 * 4096; // buses * devices * functions * 4KB config space
+
+        if entry.base_address & (segment_size - 1) != 0 {
+            return Err("MMCONFIG base address not properly aligned");
+        }
+
+        // Validate address range doesn't overflow
+        if entry.base_address.checked_add(segment_size).is_none() {
+            return Err("MMCONFIG address range overflow");
+        }
+
+        // Validate segment group
+        if entry.segment_group != 0 {
+            // Most systems only have segment group 0
+            crate::serial_println!("Warning: Non-zero PCI segment group {}", entry.segment_group);
+        }
+
+        // Map MMCONFIG space into virtual memory
+        map_mmconfig_space(entry)?;
+
+        // Test MMCONFIG access
+        if !test_mmconfig_access(entry) {
+            return Err("MMCONFIG access test failed - falling back to I/O port access");
+        }
     }
-    
-    // TODO: Map MMCONFIG regions into virtual memory and implement MMCONFIG read/write
-    // For now, we'll continue using legacy I/O port access
-    
+
+    // MMCONFIG successfully initialized
+    MMCONFIG_ENABLED.store(true, Ordering::Release);
+
     Ok(())
 }
+
+/// Map MMCONFIG space into kernel virtual memory
+fn map_mmconfig_space(entry: &crate::acpi::McfgEntry) -> Result<(), &'static str> {
+    use x86_64::{PhysAddr, VirtAddr};
+    use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB};
+
+    let bus_count = (entry.end_bus - entry.start_bus + 1) as u64;
+    let segment_size = bus_count * 256 * 8 * 4096; // Total size to map
+
+    // Get memory manager
+    let memory_manager = crate::memory::get_memory_manager()
+        .ok_or("Memory manager not initialized")?;
+
+    // Calculate number of 4KB pages needed
+    let page_count = (segment_size + 4095) / 4096;
+
+    // Map each page
+    let phys_addr = PhysAddr::new(entry.base_address);
+    let virt_addr = VirtAddr::new(entry.base_address); // Identity mapping for simplicity
+
+    for page_offset in 0..page_count {
+        let phys_page = phys_addr + page_offset * 4096;
+        let virt_page: Page<Size4KiB> = Page::containing_address(virt_addr + page_offset * 4096);
+
+        // Map with proper flags: present, writable, write-through, cache-disabled
+        let flags = PageTableFlags::PRESENT |
+                   PageTableFlags::WRITABLE |
+                   PageTableFlags::WRITE_THROUGH |
+                   PageTableFlags::NO_CACHE;
+
+        unsafe {
+            memory_manager.map_to(
+                virt_page,
+                phys_page.into(),
+                flags,
+            ).map_err(|_| "Failed to map MMCONFIG page")?
+             .flush();
+        }
+    }
+
+    Ok(())
+}
+
+/// Test MMCONFIG access by reading a known register
+fn test_mmconfig_access(entry: &crate::acpi::McfgEntry) -> bool {
+    // Try to read vendor ID from bus 0, device 0, function 0
+    let addr = entry.base_address +
+               (0u64 << 20) + // Bus 0
+               (0u64 << 15) + // Device 0
+               (0u64 << 12) + // Function 0
+               0x00;           // Offset 0 (vendor ID)
+
+    unsafe {
+        let vendor_id = core::ptr::read_volatile(addr as *const u16);
+
+        // Valid vendor IDs are not 0xFFFF or 0x0000
+        vendor_id != 0xFFFF && vendor_id != 0x0000
+    }
+}
+
+/// Global flag indicating if MMCONFIG is available
+use core::sync::atomic::{AtomicBool, Ordering};
+static MMCONFIG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Get the global PCI scanner
 pub fn get_pci_scanner() -> &'static Mutex<PciBusScanner> {
@@ -540,6 +704,50 @@ pub fn get_all_devices() -> Vec<PciDevice> {
 pub fn get_devices_by_class(class: PciClass) -> Vec<PciDevice> {
     PCI_SCANNER.lock().get_devices_by_class(class).into_iter().cloned().collect()
 }
+
+    /// Validate PCI configuration space access
+    fn validate_pci_access(&self) -> Result<bool, &'static str> {
+        // Test PCI configuration space access by reading a known register
+        // Try to read vendor ID from bus 0, device 0, function 0
+        let test_vendor = self.read_config_word(0, 0, 0, 0x00);
+        
+        // If we get all 1s, PCI access might not be working
+        if test_vendor == 0xFFFF {
+            // This could be normal if no device exists at 0:0.0
+            // Try a few more locations to validate PCI access
+            for device in 0..4 {
+                let vendor = self.read_config_word(0, device, 0, 0x00);
+                if vendor != 0xFFFF && vendor != 0x0000 {
+                    return Ok(true); // Found a valid device, PCI access works
+                }
+            }
+            return Ok(false); // No valid devices found, might indicate PCI access issues
+        }
+        
+        Ok(true)
+    }
+
+    /// Validate discovered devices for consistency
+    fn validate_discovered_devices(&self) -> Result<(), &'static str> {
+        for device in &self.devices {
+            // Validate vendor ID is not invalid
+            if device.vendor_id == 0xFFFF || device.vendor_id == 0x0000 {
+                return Err("Invalid vendor ID found in device list");
+            }
+            
+            // Validate device ID is not invalid
+            if device.device_id == 0xFFFF {
+                return Err("Invalid device ID found in device list");
+            }
+            
+            // Validate bus/device/function ranges
+            if device.bus > MAX_BUS || device.device >= MAX_DEVICE || device.function >= MAX_FUNCTION {
+                return Err("Device location out of valid range");
+            }
+        }
+        
+        Ok(())
+    }
 
 /// Print all discovered PCI devices
 pub fn print_devices() {

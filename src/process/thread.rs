@@ -237,6 +237,8 @@ pub struct ThreadManager {
     sleeping_threads: Mutex<Vec<Tid>>,
     /// Thread synchronization objects
     sync_objects: Mutex<SyncObjectManager>,
+    /// Current running thread ID (per CPU - simplified to single CPU for now)
+    current_thread: AtomicU32,
 }
 
 impl ThreadManager {
@@ -250,6 +252,7 @@ impl ThreadManager {
             ready_queue: Mutex::new(VecDeque::new()),
             sleeping_threads: Mutex::new(Vec::new()),
             sync_objects: Mutex::new(SyncObjectManager::new()),
+            current_thread: AtomicU32::new(0), // Start with kernel thread (TID 0)
         }
     }
 
@@ -609,6 +612,23 @@ impl ThreadManager {
     pub fn get_sync_objects(&self) -> &Mutex<SyncObjectManager> {
         &self.sync_objects
     }
+
+    /// Get current running thread ID
+    pub fn current_thread(&self) -> Tid {
+        self.current_thread.load(Ordering::SeqCst) as Tid
+    }
+
+    /// Set current running thread ID (called by scheduler during context switch)
+    pub fn set_current_thread(&self, tid: Tid) {
+        self.current_thread.store(tid as u32, Ordering::SeqCst);
+    }
+
+    /// Get current thread from CPU context (attempts to determine from stack or registers)
+    pub fn get_current_thread_from_context() -> Tid {
+        // In a real implementation, this would examine CPU registers or stack
+        // to determine the current thread. For now, we use the stored value.
+        THREAD_MANAGER.current_thread()
+    }
 }
 
 /// Synchronization Object Manager
@@ -842,9 +862,8 @@ where
 
 /// Sleep current thread
 pub fn sleep_ms(duration_ms: u64) -> Result<(), &'static str> {
-    // In a real implementation, this would get the current thread ID
-    // from the CPU context and call the thread manager
-    let current_tid = 0; // Placeholder
+    // Get the current thread ID from the thread manager
+    let current_tid = THREAD_MANAGER.current_thread();
     THREAD_MANAGER.sleep_thread(current_tid, duration_ms)
 }
 

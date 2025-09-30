@@ -255,3 +255,51 @@ pub fn set_cursor_position(row: usize, col: usize) {
     writer.row_position = row.min(BUFFER_HEIGHT - 1);
     writer.column_position = col.min(BUFFER_WIDTH - 1);
 }
+
+/// Write string to VGA buffer
+pub fn write_string(s: &str) {
+    use core::fmt::Write;
+    VGA_WRITER.lock().write_str(s).unwrap();
+}
+
+/// Write bytes to VGA buffer
+pub fn write_bytes(bytes: &[u8]) {
+    let mut writer = VGA_WRITER.lock();
+    for &byte in bytes {
+        match byte {
+            0x20..=0x7e | b'\n' => writer.write_byte(byte),
+            _ => writer.write_byte(0xfe), // Display replacement character
+        }
+    }
+}
+
+/// Print bytes to VGA buffer (for syscall use)
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(bytes);
+}
+
+/// Clear the entire screen
+pub fn clear_screen() {
+    let mut writer = VGA_WRITER.lock();
+    writer.clear_screen();
+}
+
+/// Print string at specific position with color
+pub fn print_at(x: usize, y: usize, text: &str, color: u8) {
+    if y >= BUFFER_HEIGHT || x >= BUFFER_WIDTH {
+        return;
+    }
+
+    let vga_buffer = 0xb8000 as *mut u8;
+    let offset = (y * BUFFER_WIDTH + x) * 2;
+
+    for (i, byte) in text.bytes().enumerate() {
+        if x + i >= BUFFER_WIDTH {
+            break;
+        }
+        unsafe {
+            *vga_buffer.add(offset + i * 2) = byte;
+            *vga_buffer.add(offset + i * 2 + 1) = color;
+        }
+    }
+}

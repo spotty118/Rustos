@@ -16,6 +16,10 @@ pub mod icmp;
 pub mod arp;
 pub mod socket;
 pub mod device;
+pub mod dhcp;
+pub mod dns;
+pub mod buffer;
+pub mod dma;
 
 use alloc::{vec::Vec, vec, collections::BTreeMap, string::{String, ToString}};
 use spin::{RwLock, Mutex};
@@ -203,6 +207,16 @@ pub enum NetworkError {
     PermissionDenied,
     /// Invalid argument
     InvalidArgument,
+    /// Hardware error
+    HardwareError,
+    /// Operation timed out
+    Timeout,
+    /// Invalid state
+    InvalidState,
+    /// Insufficient memory
+    InsufficientMemory,
+    /// Buffer too small
+    BufferTooSmall,
 }
 
 impl fmt::Display for NetworkError {
@@ -404,19 +418,139 @@ impl NetworkStack {
         Ok(())
     }
 
-    /// Find route for destination address
+    /// Find route for destination address with longest prefix matching
     pub fn find_route(&self, destination: &NetworkAddress) -> Option<RouteEntry> {
         let routing_table = self.routing_table.read();
         
-        // Simple routing - find first matching route
-        // In a real implementation, this would do longest prefix matching
+        let mut best_route: Option<RouteEntry> = None;
+        let mut best_prefix_len = 0u32;
+        
+        // Implement longest prefix matching
         for route in routing_table.iter() {
             if self.address_matches_route(destination, &route.destination, &route.netmask) {
-                return Some(route.clone());
+                let prefix_len = self.calculate_prefix_length(&route.netmask);
+                
+                // Select route with longest prefix (most specific)
+                if best_route.is_none() || prefix_len > best_prefix_len || 
+                   (prefix_len == best_prefix_len && route.metric < best_route.as_ref().unwrap().metric) {
+                    best_route = Some(route.clone());
+                    best_prefix_len = prefix_len;
+                }
             }
         }
         
-        None
+        best_route
+    }
+
+    /// Calculate prefix length from netmask
+    fn calculate_prefix_length(&self, netmask: &NetworkAddress) -> u32 {
+        match netmask {
+            NetworkAddress::IPv4(mask) => {
+                let mask_u32 = ((mask[0] as u32) << 24) |
+                              ((mask[1] as u32) << 16) |
+                              ((mask[2] as u32) << 8) |
+                              (mask[3] as u32);
+                mask_u32.leading_ones()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Enhanced route matching with subnet validation
+    fn address_matches_route(&self, addr: &NetworkAddress, dest: &NetworkAddress, mask: &NetworkAddress) -> bool {
+        match (addr, dest, mask) {
+            (NetworkAddress::IPv4(a), NetworkAddress::IPv4(d), NetworkAddress::IPv4(m)) => {
+                // Apply netmask to both addresses and compare
+                for i in 0..4 {
+                    if (a[i] & m[i]) != (d[i] & m[i]) {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false, // IPv6 support would be added here
+        }
+    }
+
+    /// Add route with validation and conflict resolution
+    pub fn add_route_validated(&self, route: RouteEntry) -> NetworkResult<()> {
+        // Validate route parameters
+        self.validate_route(&route)?;
+        
+        let mut routing_table = self.routing_table.write();
+        
+        // Check for conflicting routes
+        let conflicts: Vec<_> = routing_table.iter()
+            .enumerate()
+            .filter(|(_, existing_route)| {
+                existing_route.destination == route.destination &&
+                existing_route.netmask == route.netmask &&
+                existing_route.interface == route.interface
+            })
+            .map(|(index, _)| index)
+            .collect();
+        
+        // Remove conflicting routes (replace with new one)
+        for &index in conflicts.iter().rev() {
+            routing_table.remove(index);
+        }
+        
+        // Insert new route in sorted order (by prefix length, then metric)
+        let insert_pos = routing_table.iter()
+            .position(|existing_route| {
+                let existing_prefix = self.calculate_prefix_length(&existing_route.netmask);
+                let new_prefix = self.calculate_prefix_length(&route.netmask);
+                
+                existing_prefix < new_prefix || 
+                (existing_prefix == new_prefix && existing_route.metric > route.metric)
+            })
+            .unwrap_or(routing_table.len());
+        
+        routing_table.insert(insert_pos, route);
+        
+        Ok(())
+    }
+
+    /// Validate route entry
+    fn validate_route(&self, route: &RouteEntry) -> NetworkResult<()> {
+        // Check if interface exists
+        let interfaces = self.interfaces.read();
+        if !interfaces.contains_key(&route.interface) {
+            return Err(NetworkError::InvalidAddress);
+        }
+        
+        // Validate destination and netmask compatibility
+        match (&route.destination, &route.netmask) {
+            (NetworkAddress::IPv4(dest), NetworkAddress::IPv4(mask)) => {
+                // Check that destination is properly masked
+                for i in 0..4 {
+                    if (dest[i] & mask[i]) != dest[i] {
+                        return Err(NetworkError::InvalidAddress);
+                    }
+                }
+            }
+            _ => return Err(NetworkError::NotSupported),
+        }
+        
+        // Validate gateway if present
+        if let Some(gateway) = &route.gateway {
+            // Gateway should be reachable through the specified interface
+            let interface = interfaces.get(&route.interface).unwrap();
+            let mut gateway_reachable = false;
+            
+            for interface_ip in &interface.ip_addresses {
+                if self.is_same_subnet(interface_ip, gateway) {
+                    gateway_reachable = true;
+                    break;
+                }
+            }
+            
+            if !gateway_reachable {
+                return Err(NetworkError::NoRoute);
+            }
+        }
+        
+        Ok(())
     }
 
     /// Check if address matches route with netmask
@@ -434,15 +568,156 @@ impl NetworkStack {
         }
     }
 
-    /// Update ARP table (delegated to enhanced ARP module)
+    /// Update ARP table with real address resolution
     pub fn update_arp(&self, ip: NetworkAddress, mac: NetworkAddress) {
-        // Use enhanced ARP module
+        // Update local ARP table
+        let mut arp_table = self.arp_table.write();
+        arp_table.insert(ip, mac);
+        
+        // Also update enhanced ARP module
         arp::update_arp_entry(ip, mac, "default".to_string()).ok();
     }
 
-    /// Lookup MAC address for IP (delegated to enhanced ARP module)
+    /// Lookup MAC address for IP with real resolution
     pub fn lookup_arp(&self, ip: &NetworkAddress) -> Option<NetworkAddress> {
-        arp::lookup_arp(ip)
+        // First check local cache
+        {
+            let arp_table = self.arp_table.read();
+            if let Some(mac) = arp_table.get(ip) {
+                return Some(*mac);
+            }
+        }
+
+        // Check enhanced ARP module
+        if let Some(mac) = arp::lookup_arp(ip) {
+            // Cache the result locally
+            self.update_arp(*ip, mac);
+            return Some(mac);
+        }
+
+        // If not found, initiate ARP request for IPv4 addresses
+        match ip {
+            NetworkAddress::IPv4(_) => {
+                self.send_arp_request(ip).ok();
+                None
+            }
+            _ => None, // IPv6 uses Neighbor Discovery Protocol
+        }
+    }
+
+    /// Send ARP request for address resolution
+    pub fn send_arp_request(&self, target_ip: &NetworkAddress) -> NetworkResult<()> {
+        // Find appropriate interface for this IP
+        let interface_name = self.find_interface_for_ip(target_ip)?;
+        
+        // Get interface details
+        let interfaces = self.interfaces.read();
+        let interface = interfaces.get(&interface_name)
+            .ok_or(NetworkError::InvalidAddress)?;
+        
+        let src_mac = interface.mac_address;
+        let src_ip = interface.ip_addresses.first()
+            .ok_or(NetworkError::InvalidAddress)?;
+
+        drop(interfaces);
+
+        // Create ARP request packet
+        let arp_packet = self.create_arp_request_packet(src_mac, *src_ip, *target_ip)?;
+        
+        // Send through interface
+        self.send_packet(&interface_name, arp_packet)?;
+        
+        Ok(())
+    }
+
+    /// Find interface that can reach the given IP address
+    fn find_interface_for_ip(&self, target_ip: &NetworkAddress) -> NetworkResult<String> {
+        let interfaces = self.interfaces.read();
+        
+        // First, check if target is on same subnet as any interface
+        for (name, interface) in interfaces.iter() {
+            if !interface.flags.up {
+                continue;
+            }
+            
+            for interface_ip in &interface.ip_addresses {
+                if self.is_same_subnet(interface_ip, target_ip) {
+                    return Ok(name.clone());
+                }
+            }
+        }
+        
+        // If not on same subnet, use default route
+        let routing_table = self.routing_table.read();
+        for route in routing_table.iter() {
+            if self.address_matches_route(target_ip, &route.destination, &route.netmask) {
+                return Ok(route.interface.clone());
+            }
+        }
+        
+        // Fallback to first up interface
+        for (name, interface) in interfaces.iter() {
+            if interface.flags.up {
+                return Ok(name.clone());
+            }
+        }
+        
+        Err(NetworkError::NoRoute)
+    }
+
+    /// Check if two IP addresses are on the same subnet
+    fn is_same_subnet(&self, ip1: &NetworkAddress, ip2: &NetworkAddress) -> bool {
+        match (ip1, ip2) {
+            (NetworkAddress::IPv4(a), NetworkAddress::IPv4(b)) => {
+                // Simple /24 subnet check for now
+                a[0] == b[0] && a[1] == b[1] && a[2] == b[2]
+            }
+            _ => false,
+        }
+    }
+
+    /// Create ARP request packet
+    fn create_arp_request_packet(
+        &self,
+        src_mac: NetworkAddress,
+        src_ip: NetworkAddress,
+        target_ip: NetworkAddress,
+    ) -> NetworkResult<PacketBuffer> {
+        let mut packet_data = Vec::new();
+        
+        // Ethernet header
+        packet_data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); // Broadcast MAC
+        if let NetworkAddress::Mac(mac_bytes) = src_mac {
+            packet_data.extend_from_slice(&mac_bytes);
+        }
+        packet_data.extend_from_slice(&[0x08, 0x06]); // ARP EtherType
+        
+        // ARP header
+        packet_data.extend_from_slice(&[0x00, 0x01]); // Hardware type (Ethernet)
+        packet_data.extend_from_slice(&[0x08, 0x00]); // Protocol type (IPv4)
+        packet_data.push(6); // Hardware address length
+        packet_data.push(4); // Protocol address length
+        packet_data.extend_from_slice(&[0x00, 0x01]); // Operation (request)
+        
+        // Sender hardware address
+        if let NetworkAddress::Mac(mac_bytes) = src_mac {
+            packet_data.extend_from_slice(&mac_bytes);
+        }
+        
+        // Sender protocol address
+        if let NetworkAddress::IPv4(ip_bytes) = src_ip {
+            packet_data.extend_from_slice(&ip_bytes);
+        }
+        
+        // Target hardware address (unknown, all zeros)
+        packet_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        
+        // Target protocol address
+        if let NetworkAddress::IPv4(ip_bytes) = target_ip {
+            packet_data.extend_from_slice(&ip_bytes);
+        }
+        
+        Ok(PacketBuffer::from_data(packet_data))
     }
 
     /// Create a new socket
@@ -503,18 +778,39 @@ impl NetworkStack {
             return Err(NetworkError::NetworkUnreachable);
         }
 
-        // Update interface statistics
+        // Validate packet before transmission
+        let packet_data = packet.as_slice();
+        if packet_data.is_empty() {
+            return Err(NetworkError::InvalidPacket);
+        }
+
+        // Check MTU
+        if packet_data.len() > interface.mtu as usize {
+            return Err(NetworkError::BufferOverflow);
+        }
+
         drop(interfaces);
+
+        // Send through device manager
+        let result = device::device_manager().send_packet(interface_name, packet);
+        
+        // Update interface statistics
         {
             let mut interfaces = self.interfaces.write();
             if let Some(interface) = interfaces.get_mut(interface_name) {
-                interface.stats.tx_packets += 1;
-                interface.stats.tx_bytes += packet.length as u64;
+                match &result {
+                    Ok(_) => {
+                        interface.stats.tx_packets += 1;
+                        interface.stats.tx_bytes += packet_data.len() as u64;
+                    }
+                    Err(_) => {
+                        interface.stats.tx_errors += 1;
+                    }
+                }
             }
         }
 
-        // TODO: Send to network device
-        Ok(())
+        result
     }
 
     /// Get network statistics

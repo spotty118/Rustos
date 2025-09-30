@@ -1,7 +1,22 @@
 //! UDP (User Datagram Protocol) implementation
 //!
-//! This module provides UDP packet processing and socket operations
+//! This module provides comprehensive UDP packet processing and socket operations
 //! for connectionless datagram communication.
+//!
+//! # Features
+//!
+//! - RFC 768 compliant UDP implementation
+//! - Socket options: SO_REUSEADDR, SO_REUSEPORT, SO_BROADCAST
+//! - Multicast group management (join/leave)
+//! - Configurable send/receive buffer sizes and timeouts
+//! - Comprehensive statistics tracking and error reporting
+//! - Advanced port allocation with collision avoidance
+//! - Wildcard binding and connection semantics
+//!
+//! # Implementation Status
+//!
+//! Current implementation supports IPv4 only. IPv6 support is planned for future releases.
+//! ICMPv6 checksum calculation requires IPv6 pseudo-header implementation.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
 use alloc::{vec::Vec, collections::BTreeMap};
@@ -47,12 +62,14 @@ impl UdpHeader {
     }
 
     /// Calculate UDP checksum
+    /// RFC 768 (IPv4) and RFC 2460 Section 8.1 (IPv6)
     pub fn calculate_checksum(&self, src_ip: &NetworkAddress, dst_ip: &NetworkAddress, payload: &[u8]) -> u16 {
         let mut sum = 0u32;
 
-        // Pseudo-header
+        // Pseudo-header (differs between IPv4 and IPv6)
         match (src_ip, dst_ip) {
             (NetworkAddress::IPv4(src), NetworkAddress::IPv4(dst)) => {
+                // IPv4 pseudo-header
                 sum += ((src[0] as u32) << 8) | (src[1] as u32);
                 sum += ((src[2] as u32) << 8) | (src[3] as u32);
                 sum += ((dst[0] as u32) << 8) | (dst[1] as u32);
@@ -60,7 +77,24 @@ impl UdpHeader {
                 sum += 17; // Protocol (UDP)
                 sum += self.length as u32;
             }
-            _ => return 0, // IPv6 not implemented yet
+            (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) => {
+                // IPv6 pseudo-header (RFC 2460 Section 8.1)
+                // Source address (16 bytes)
+                for chunk in src.chunks(2) {
+                    sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+                }
+                // Destination address (16 bytes)
+                for chunk in dst.chunks(2) {
+                    sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+                }
+                // Upper-layer packet length (32 bits)
+                let udp_len = self.length as u32;
+                sum += udp_len >> 16;
+                sum += udp_len & 0xFFFF;
+                // Next header (UDP = 17, padded to 32 bits)
+                sum += 17;
+            }
+            _ => return 0, // Mixed address families not supported
         }
 
         // UDP header
@@ -84,7 +118,15 @@ impl UdpHeader {
         }
 
         let result = !sum as u16;
-        if result == 0 { 0xFFFF } else { result } // UDP checksum of 0 means no checksum
+        // UDP checksum of 0 means no checksum (only for IPv4, mandatory for IPv6)
+        if result == 0 {
+            match (src_ip, dst_ip) {
+                (NetworkAddress::IPv6(_), NetworkAddress::IPv6(_)) => 0xFFFF, // IPv6: checksum is mandatory
+                _ => 0xFFFF, // IPv4: 0xFFFF if calculated checksum is 0
+            }
+        } else {
+            result
+        }
     }
 
     /// Serialize UDP header to buffer
@@ -560,32 +602,130 @@ impl UdpManager {
         }
     }
 
-    /// Find sockets that should receive a datagram
+    /// Find sockets that should receive a datagram with comprehensive routing
     pub fn find_receiving_sockets(&self, dest_addr: &NetworkAddress, dest_port: u16) -> Vec<(NetworkAddress, u16)> {
         let sockets = self.sockets.read();
         let mut receivers = Vec::new();
+        let mut exact_matches = Vec::new();
+        let mut wildcard_matches = Vec::new();
 
         for ((addr, port), socket) in sockets.iter() {
-            // Check if socket should receive this datagram
-            let should_receive = if *port == dest_port {
-                // Exact address match
-                *addr == *dest_addr ||
-                // Wildcard address (0.0.0.0)
-                matches!(addr, NetworkAddress::IPv4([0, 0, 0, 0])) ||
-                // Broadcast
-                (socket.broadcast && dest_addr.is_broadcast()) ||
-                // Multicast
-                (dest_addr.is_multicast() && socket.multicast_groups.contains(dest_addr))
-            } else {
-                false
+            if *port != dest_port {
+                continue;
+            }
+
+            let should_receive = match (addr, dest_addr) {
+                // Exact address match (highest priority)
+                (a, d) if a == d => {
+                    exact_matches.push((*addr, *port));
+                    true
+                }
+                // Wildcard address (0.0.0.0) - lower priority
+                (NetworkAddress::IPv4([0, 0, 0, 0]), _) => {
+                    wildcard_matches.push((*addr, *port));
+                    true
+                }
+                // Broadcast handling
+                (_, d) if d.is_broadcast() && socket.broadcast => {
+                    receivers.push((*addr, *port));
+                    true
+                }
+                // Multicast handling
+                (_, d) if d.is_multicast() && socket.multicast_groups.contains(dest_addr) => {
+                    receivers.push((*addr, *port));
+                    true
+                }
+                // Loopback special case
+                (NetworkAddress::IPv4([127, 0, 0, 1]), NetworkAddress::IPv4([127, 0, 0, 1])) => {
+                    exact_matches.push((*addr, *port));
+                    true
+                }
+                _ => false,
             };
 
+            // Additional filtering based on socket state
             if should_receive {
-                receivers.push((*addr, *port));
+                // Check if socket is in valid state to receive
+                if socket.is_idle(300000) { // 5 minutes idle timeout
+                    continue;
+                }
+
+                // Check receive buffer space
+                let current_buffer_size: usize = socket.recv_buffer.iter().map(|d| d.data.len()).sum();
+                if current_buffer_size >= socket.socket_options.recv_buffer_size {
+                    // Buffer full, would drop packet
+                    continue;
+                }
             }
         }
 
-        receivers
+        // Return exact matches first, then wildcard matches
+        // This implements proper socket binding precedence
+        if !exact_matches.is_empty() {
+            exact_matches
+        } else if !wildcard_matches.is_empty() {
+            wildcard_matches
+        } else {
+            receivers
+        }
+    }
+
+    /// Advanced packet routing with load balancing for multiple sockets
+    pub fn route_packet_advanced(
+        &self,
+        dest_addr: &NetworkAddress,
+        dest_port: u16,
+        src_addr: &NetworkAddress,
+        src_port: u16,
+    ) -> Vec<(NetworkAddress, u16)> {
+        let mut receivers = self.find_receiving_sockets(dest_addr, dest_port);
+
+        // If multiple sockets can receive the packet, apply load balancing
+        if receivers.len() > 1 {
+            // Simple hash-based load balancing using source address and port
+            let hash = self.calculate_flow_hash(src_addr, src_port, dest_addr, dest_port);
+            let selected_index = (hash as usize) % receivers.len();
+            vec![receivers[selected_index]]
+        } else {
+            receivers
+        }
+    }
+
+    /// Calculate flow hash for load balancing
+    fn calculate_flow_hash(
+        &self,
+        src_addr: &NetworkAddress,
+        src_port: u16,
+        dest_addr: &NetworkAddress,
+        dest_port: u16,
+    ) -> u32 {
+        let mut hash = 0u32;
+
+        // Hash source address
+        match src_addr {
+            NetworkAddress::IPv4(bytes) => {
+                for &byte in bytes {
+                    hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+                }
+            }
+            _ => {}
+        }
+
+        // Hash destination address
+        match dest_addr {
+            NetworkAddress::IPv4(bytes) => {
+                for &byte in bytes {
+                    hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+                }
+            }
+            _ => {}
+        }
+
+        // Hash ports
+        hash = hash.wrapping_mul(31).wrapping_add(src_port as u32);
+        hash = hash.wrapping_mul(31).wrapping_add(dest_port as u32);
+
+        hash
     }
 }
 
@@ -639,8 +779,8 @@ static UDP_MANAGER: UdpManager = UdpManager {
 
 /// Get current time in milliseconds
 fn current_time_ms() -> u64 {
-    // TODO: Get actual system time
-    1000000000 + (unsafe { core::arch::x86_64::_rdtsc() } / 1000000)
+    // Use system time for UDP timestamps
+    crate::time::get_system_time_ms()
 }
 
 /// Process incoming UDP packet
@@ -680,10 +820,10 @@ pub fn process_packet(
 
     // Find receiving sockets
     let receivers = UDP_MANAGER.find_receiving_sockets(&dst_ip, header.dest_port);
-    
+
     if receivers.is_empty() {
-        // Production: no listener on port (expected for closed ports)
-        // TODO: Send ICMP Port Unreachable
+        // No listener on port - send ICMP Port Unreachable
+        send_icmp_port_unreachable(dst_ip, src_ip, &packet.as_slice()[..packet.position])?;
         return Ok(());
     }
 
@@ -728,12 +868,20 @@ pub fn send_udp_packet(
     // Calculate checksum
     header.checksum = header.calculate_checksum(&src_ip, &dst_ip, payload);
 
-    // Production: UDP packet sent silently
+    // Serialize UDP header and payload
+    let mut udp_packet = Vec::with_capacity(8 + payload.len());
 
-    // TODO: Send through IP layer
-    // For now, just log the operation
-    
-    Ok(())
+    // UDP header serialization
+    udp_packet.extend_from_slice(&src_port.to_be_bytes());
+    udp_packet.extend_from_slice(&dst_port.to_be_bytes());
+    udp_packet.extend_from_slice(&header.length.to_be_bytes());
+    udp_packet.extend_from_slice(&header.checksum.to_be_bytes());
+
+    // Add payload
+    udp_packet.extend_from_slice(payload);
+
+    // Send through IP layer
+    super::ip::send_ipv4_packet(src_ip, dst_ip, 17, &udp_packet)
 }
 
 /// UDP socket operations
@@ -851,10 +999,75 @@ pub fn udp_leave_multicast(
     })
 }
 
-/// Get current time (placeholder)
+/// Get current time in milliseconds
 fn get_current_time() -> u64 {
-    // TODO: Get actual system time
-    1000000 // Placeholder timestamp
+    // Use system time for UDP operations
+    crate::time::get_system_time_ms()
+}
+
+/// Send ICMP Port Unreachable message
+fn send_icmp_port_unreachable(
+    src_ip: NetworkAddress,
+    dst_ip: NetworkAddress,
+    original_packet: &[u8],
+) -> NetworkResult<()> {
+    // ICMP Destination Unreachable format:
+    // Type: 3 (Destination Unreachable)
+    // Code: 3 (Port Unreachable)
+    // Include IP header + first 8 bytes of original datagram
+
+    let mut icmp_payload = Vec::new();
+
+    // Unused field (must be zero)
+    icmp_payload.extend_from_slice(&[0u8; 4]);
+
+    // Include IP header + 8 bytes of original datagram
+    // Take at most 28 bytes (20 byte IP header + 8 bytes data)
+    let include_len = core::cmp::min(original_packet.len(), 28);
+    icmp_payload.extend_from_slice(&original_packet[..include_len]);
+
+    // Build ICMP header
+    let icmp_type = 3u8; // Destination Unreachable
+    let icmp_code = 3u8; // Port Unreachable
+
+    // Calculate checksum
+    let mut checksum_data = Vec::new();
+    checksum_data.push(icmp_type);
+    checksum_data.push(icmp_code);
+    checksum_data.extend_from_slice(&[0u8; 2]); // Checksum placeholder
+    checksum_data.extend_from_slice(&icmp_payload);
+
+    let checksum = calculate_icmp_checksum(&checksum_data);
+
+    // Build final ICMP packet
+    let mut icmp_packet = Vec::new();
+    icmp_packet.push(icmp_type);
+    icmp_packet.push(icmp_code);
+    icmp_packet.extend_from_slice(&checksum.to_be_bytes());
+    icmp_packet.extend_from_slice(&icmp_payload);
+
+    // Send through IP layer (protocol 1 = ICMP)
+    super::ip::send_ipv4_packet(src_ip, dst_ip, 1, &icmp_packet)
+}
+
+/// Calculate ICMP checksum
+fn calculate_icmp_checksum(data: &[u8]) -> u16 {
+    let mut sum = 0u32;
+
+    for chunk in data.chunks(2) {
+        if chunk.len() == 2 {
+            sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+        } else {
+            sum += (chunk[0] as u32) << 8;
+        }
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !sum as u16
 }
 
 #[cfg(test)]

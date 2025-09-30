@@ -2,6 +2,22 @@
 //!
 //! Provides comprehensive Internet Control Message Protocol support for IPv4 and IPv6,
 //! including ping, traceroute, error reporting, and neighbor discovery.
+//!
+//! # Features
+//!
+//! - RFC 792 compliant ICMP (IPv4) implementation
+//! - RFC 4443 compliant ICMPv6 implementation
+//! - Echo request/reply (ping) functionality
+//! - Error message generation and processing
+//! - Router discovery for IPv6 (RFC 4861)
+//! - Neighbor discovery protocol (NDP) for IPv6
+//! - Comprehensive statistics tracking
+//! - Rate limiting for ICMP responses
+//!
+//! # Implementation Status
+//!
+//! ICMPv6 support is currently in development. Neighbor Discovery Protocol (NDP)
+//! and router discovery features require completion of the IPv6 stack integration.
 
 use super::{NetworkAddress, NetworkResult, NetworkError, PacketBuffer, NetworkStack};
 use alloc::{vec::Vec, collections::BTreeMap};
@@ -398,7 +414,22 @@ pub fn process_icmpv6_packet(
     let header = Icmpv6Header::parse(&mut packet)?;
     let payload = packet.read(packet.remaining()).unwrap_or(&[]).to_vec();
 
-    // Note: ICMPv6 checksum includes pseudo-header which we'd calculate in full implementation
+    // Verify ICMPv6 checksum with pseudo-header (RFC 4443 Section 2.3)
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (ip_header_src, ip_header_dst) {
+        // Reconstruct full ICMPv6 packet for checksum verification
+        let mut full_packet = Vec::new();
+        full_packet.push(header.icmp_type);
+        full_packet.push(header.code);
+        full_packet.extend_from_slice(&[0u8; 2]); // Zero out checksum field for verification
+        full_packet.extend_from_slice(&header.rest);
+        full_packet.extend_from_slice(&payload);
+
+        let calculated_checksum = calculate_icmpv6_checksum_local(&src, &dst, &full_packet);
+        if calculated_checksum != header.checksum {
+            // Checksum mismatch - drop packet silently in production
+            return Err(NetworkError::InvalidPacket);
+        }
+    }
 
     match header.icmp_type {
         128 => { // Echo Request
@@ -599,15 +630,30 @@ fn send_icmp_echo_request(
     let mut final_header = header;
     final_header.checksum = checksum;
 
-    // TODO: Send through IP layer
-    let _ = (dst_ip, final_header); // Avoid unused warnings
-    Ok(())
+    // Build ICMP packet
+    let mut packet_data = Vec::new();
+    packet_data.push(final_header.icmp_type);
+    packet_data.push(final_header.code);
+    packet_data.extend_from_slice(&final_header.checksum.to_be_bytes());
+    packet_data.extend_from_slice(&final_header.rest);
+    packet_data.extend_from_slice(&ping_data.payload);
+
+    // Get source IP from network stack
+    let src_ip = crate::net::network_stack()
+        .list_interfaces()
+        .first()
+        .and_then(|iface| iface.ip_addresses.iter().find(|addr| matches!(addr, NetworkAddress::IPv4(_))))
+        .copied()
+        .ok_or(NetworkError::NetworkUnreachable)?;
+
+    // Send through IP layer with protocol 1 (ICMP)
+    crate::net::ip::send_ipv4_packet(src_ip, dst_ip, 1, &packet_data)
 }
 
 /// Send ICMP echo reply
 fn send_icmp_echo_reply(
     dst_ip: NetworkAddress,
-    _src_ip: NetworkAddress,
+    src_ip: NetworkAddress,
     identifier: u16,
     sequence: u16,
     payload: &[u8],
@@ -625,50 +671,130 @@ fn send_icmp_echo_reply(
     let mut final_header = header;
     final_header.checksum = checksum;
 
-    // TODO: Send through IP layer
-    let _ = (dst_ip, final_header); // Avoid unused warnings
-    Ok(())
+    // Build ICMP packet
+    let mut packet_data = Vec::new();
+    packet_data.push(final_header.icmp_type);
+    packet_data.push(final_header.code);
+    packet_data.extend_from_slice(&final_header.checksum.to_be_bytes());
+    packet_data.extend_from_slice(&final_header.rest);
+    packet_data.extend_from_slice(&ping_data.payload);
+
+    // Send through IP layer with protocol 1 (ICMP)
+    // Use src_ip parameter which is the original destination (our IP)
+    crate::net::ip::send_ipv4_packet(src_ip, dst_ip, 1, &packet_data)
 }
 
 /// Send ICMPv6 echo request
+/// RFC 4443 Section 4.1
 fn send_icmpv6_echo_request(
     dst_ip: NetworkAddress,
     identifier: u16,
     sequence: u16,
     payload: &[u8],
 ) -> NetworkResult<()> {
-    let ping_data = PingData::new(identifier, sequence, payload.to_vec());
-    let header = Icmpv6Header {
-        icmp_type: 128, // Echo Request
-        code: 0,
-        checksum: 0, // Would include pseudo-header in calculation
-        rest: ping_data.to_rest_bytes(),
-    };
+    // Get source IPv6 address from network stack
+    let src_ip = crate::net::network_stack()
+        .list_interfaces()
+        .first()
+        .and_then(|iface| iface.ip_addresses.iter().find(|addr| matches!(addr, NetworkAddress::IPv6(_))))
+        .copied()
+        .ok_or(NetworkError::NetworkUnreachable)?;
 
-    // TODO: Calculate proper ICMPv6 checksum and send through IPv6 layer
-    let _ = (dst_ip, header); // Avoid unused warnings
-    Ok(())
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (src_ip, dst_ip) {
+        let ping_data = PingData::new(identifier, sequence, payload.to_vec());
+
+        // Build ICMPv6 packet
+        let mut icmpv6_packet = Vec::new();
+        icmpv6_packet.push(128u8); // Type: Echo Request
+        icmpv6_packet.push(0u8);   // Code: 0
+        icmpv6_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+        icmpv6_packet.extend_from_slice(&ping_data.to_rest_bytes());
+        icmpv6_packet.extend_from_slice(&ping_data.payload);
+
+        // Calculate ICMPv6 checksum with IPv6 pseudo-header
+        let checksum = calculate_icmpv6_checksum_local(&src, &dst, &icmpv6_packet);
+        icmpv6_packet[2] = (checksum >> 8) as u8;
+        icmpv6_packet[3] = (checksum & 0xFF) as u8;
+
+        // Send through IPv6 layer with next header 58 (ICMPv6)
+        crate::net::ip::send_ipv6_packet(src_ip, dst_ip, 58, &icmpv6_packet)
+    } else {
+        Err(NetworkError::InvalidAddress)
+    }
 }
 
 /// Send ICMPv6 echo reply
+/// RFC 4443 Section 4.2
 fn send_icmpv6_echo_reply(
     dst_ip: NetworkAddress,
-    _src_ip: NetworkAddress,
+    src_ip: NetworkAddress,
     identifier: u16,
     sequence: u16,
     payload: &[u8],
 ) -> NetworkResult<()> {
-    let ping_data = PingData::new(identifier, sequence, payload.to_vec());
-    let header = Icmpv6Header {
-        icmp_type: 129, // Echo Reply
-        code: 0,
-        checksum: 0, // Would include pseudo-header in calculation
-        rest: ping_data.to_rest_bytes(),
-    };
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (src_ip, dst_ip) {
+        let ping_data = PingData::new(identifier, sequence, payload.to_vec());
 
-    // TODO: Calculate proper ICMPv6 checksum and send through IPv6 layer
-    let _ = (dst_ip, header); // Avoid unused warnings
-    Ok(())
+        // Build ICMPv6 packet
+        let mut icmpv6_packet = Vec::new();
+        icmpv6_packet.push(129u8); // Type: Echo Reply
+        icmpv6_packet.push(0u8);   // Code: 0
+        icmpv6_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+        icmpv6_packet.extend_from_slice(&ping_data.to_rest_bytes());
+        icmpv6_packet.extend_from_slice(&ping_data.payload);
+
+        // Calculate ICMPv6 checksum with IPv6 pseudo-header
+        let checksum = calculate_icmpv6_checksum_local(&src, &dst, &icmpv6_packet);
+        icmpv6_packet[2] = (checksum >> 8) as u8;
+        icmpv6_packet[3] = (checksum & 0xFF) as u8;
+
+        // Send through IPv6 layer with next header 58 (ICMPv6)
+        crate::net::ip::send_ipv6_packet(src_ip, dst_ip, 58, &icmpv6_packet)
+    } else {
+        Err(NetworkError::InvalidAddress)
+    }
+}
+
+/// Calculate ICMPv6 checksum with IPv6 pseudo-header
+/// RFC 4443 Section 2.3, RFC 2460 Section 8.1
+fn calculate_icmpv6_checksum_local(src: &[u8; 16], dst: &[u8; 16], packet: &[u8]) -> u16 {
+    let mut sum = 0u32;
+
+    // IPv6 pseudo-header checksum
+    // Source address (16 bytes)
+    for chunk in src.chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+
+    // Destination address (16 bytes)
+    for chunk in dst.chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+
+    // Upper-layer packet length (32 bits)
+    let packet_len = packet.len() as u32;
+    sum += packet_len >> 16;
+    sum += packet_len & 0xFFFF;
+
+    // Next header (ICMPv6 = 58, padded to 32 bits)
+    sum += 58;
+
+    // ICMPv6 packet data
+    for chunk in packet.chunks(2) {
+        if chunk.len() == 2 {
+            sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+        } else {
+            sum += (chunk[0] as u32) << 8;
+        }
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    // One's complement
+    !sum as u16
 }
 
 /// Send neighbor advertisement (IPv6)
@@ -677,38 +803,55 @@ fn send_neighbor_advertisement(
     dst_ip: NetworkAddress,
     target_ip: NetworkAddress,
 ) -> NetworkResult<()> {
-    // Build neighbor advertisement packet
-    let mut payload = Vec::new();
+    // Get source IPv6 address from network stack
+    let src_ip = crate::net::network_stack()
+        .list_interfaces()
+        .first()
+        .and_then(|iface| iface.ip_addresses.iter().find(|addr| matches!(addr, NetworkAddress::IPv6(_))))
+        .copied()
+        .ok_or(NetworkError::NetworkUnreachable)?;
 
-    // Flags: Solicited + Override
-    payload.extend_from_slice(&0x60000000u32.to_be_bytes());
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (src_ip, dst_ip) {
+        // Build neighbor advertisement payload
+        let mut payload = Vec::new();
 
-    // Target address
-    if let NetworkAddress::IPv6(addr) = target_ip {
-        payload.extend_from_slice(&addr);
+        // Flags: Solicited + Override
+        payload.extend_from_slice(&0x60000000u32.to_be_bytes());
+
+        // Target address
+        if let NetworkAddress::IPv6(addr) = target_ip {
+            payload.extend_from_slice(&addr);
+        } else {
+            return Err(NetworkError::InvalidAddress);
+        }
+
+        // Target Link-layer Address option
+        payload.push(2); // Option type
+        payload.push(1); // Length (1 * 8 bytes)
+        if let NetworkAddress::Mac(mac) = our_mac {
+            payload.extend_from_slice(&mac);
+        } else {
+            return Err(NetworkError::InvalidAddress);
+        }
+
+        // Build complete ICMPv6 packet
+        let mut icmpv6_packet = Vec::new();
+        icmpv6_packet.push(136u8); // Type: Neighbor Advertisement
+        icmpv6_packet.push(0u8);   // Code: 0
+        icmpv6_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+        icmpv6_packet.extend_from_slice(&[0u8; 4]); // Reserved (must be zero)
+        icmpv6_packet.extend_from_slice(&payload);
+
+        // Calculate ICMPv6 checksum with IPv6 pseudo-header
+        let checksum = calculate_icmpv6_checksum_local(&src, &dst, &icmpv6_packet);
+        icmpv6_packet[2] = (checksum >> 8) as u8;
+        icmpv6_packet[3] = (checksum & 0xFF) as u8;
+
+        // Send through IPv6 layer with next header 58 (ICMPv6)
+        crate::net::ip::send_ipv6_packet(src_ip, dst_ip, 58, &icmpv6_packet)
     } else {
-        return Err(NetworkError::InvalidAddress);
+        Err(NetworkError::InvalidAddress)
     }
-
-    // Target Link-layer Address option
-    payload.push(2); // Option type
-    payload.push(1); // Length (1 * 8 bytes)
-    if let NetworkAddress::Mac(mac) = our_mac {
-        payload.extend_from_slice(&mac);
-    } else {
-        return Err(NetworkError::InvalidAddress);
-    }
-
-    let header = Icmpv6Header {
-        icmp_type: 136, // Neighbor Advertisement
-        code: 0,
-        checksum: 0, // Would calculate with pseudo-header
-        rest: [0; 4],
-    };
-
-    // TODO: Send through IPv6 layer
-    let _ = (dst_ip, header, payload); // Avoid unused warnings
-    Ok(())
 }
 
 /// Public API functions
@@ -734,10 +877,10 @@ pub fn ping_stop(identifier: u16) -> NetworkResult<()> {
     ICMP_MANAGER.close_ping(identifier)
 }
 
-/// Get current time in milliseconds (helper function)
+/// Get current time in milliseconds
 fn current_time_ms() -> u64 {
-    // TODO: Get actual system time
-    1000000000 + (unsafe { core::arch::x86_64::_rdtsc() } / 1000000)
+    // Use system time for ICMP echo timestamps
+    crate::time::get_system_time_ms()
 }
 
 /// Initialize ICMP subsystem

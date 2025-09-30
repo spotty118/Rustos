@@ -576,6 +576,12 @@ pub fn handle_keyboard_interrupt() {
 // Integration with existing interrupt system
 // Note: handle_keyboard_interrupt is called directly from interrupts.rs
 
+/// Get scancode from keyboard buffer (non-blocking)
+pub fn get_scancode() -> Option<u8> {
+    // Return next available scancode if any
+    None // Placeholder - would integrate with keyboard interrupt handler
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

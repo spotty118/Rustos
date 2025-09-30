@@ -10,6 +10,9 @@
 pub mod vfs;
 pub mod ramfs;
 pub mod devfs;
+pub mod ext4;
+pub mod fat32;
+pub mod buffer;
 
 use alloc::{string::{String, ToString}, vec::Vec, collections::BTreeMap, format, boxed::Box};
 use core::fmt;
@@ -798,23 +801,74 @@ lazy_static! {
 
 /// Initialize the VFS subsystem
 pub fn init() -> FsResult<()> {
-    // Mount root ramfs
-    let root_fs = Box::new(ramfs::RamFs::new());
-    VFS.mount("/", root_fs, MountFlags::default())?;
+    // Initialize buffer cache
+    buffer::init_buffer_cache();
+
+    // Try to mount real filesystem from storage device 1 (if available)
+    let root_mounted = if let Ok(ext4_fs) = ext4::Ext4FileSystem::new(1) {
+        // Mount EXT4 filesystem as root
+        let ext4_box = Box::new(ext4_fs);
+        VFS.mount("/", ext4_box, MountFlags::default()).is_ok()
+    } else if let Ok(fat32_fs) = fat32::Fat32FileSystem::new(1) {
+        // Mount FAT32 filesystem as root
+        let fat32_box = Box::new(fat32_fs);
+        VFS.mount("/", fat32_box, MountFlags::default()).is_ok()
+    } else {
+        false
+    };
+
+    // Fall back to RAM filesystem if no real filesystem found
+    if !root_mounted {
+        let root_fs = Box::new(ramfs::RamFs::new());
+        VFS.mount("/", root_fs, MountFlags::default())?;
+    }
 
     // Mount devfs at /dev
     let dev_fs = Box::new(devfs::DevFs::new());
     VFS.mount("/dev", dev_fs, MountFlags::default())?;
 
-    // Create standard directories
-    VFS.mkdir("/tmp", FilePermissions::from_octal(0o755))?;
-    VFS.mkdir("/proc", FilePermissions::from_octal(0o755))?;
-    VFS.mkdir("/sys", FilePermissions::from_octal(0o755))?;
-    VFS.mkdir("/home", FilePermissions::from_octal(0o755))?;
-    VFS.mkdir("/usr", FilePermissions::from_octal(0o755))?;
-    VFS.mkdir("/var", FilePermissions::from_octal(0o755))?;
+    // Create standard directories (only if using RAM filesystem)
+    if !root_mounted {
+        VFS.mkdir("/tmp", FilePermissions::from_octal(0o755))?;
+        VFS.mkdir("/proc", FilePermissions::from_octal(0o755))?;
+        VFS.mkdir("/sys", FilePermissions::from_octal(0o755))?;
+        VFS.mkdir("/home", FilePermissions::from_octal(0o755))?;
+        VFS.mkdir("/usr", FilePermissions::from_octal(0o755))?;
+        VFS.mkdir("/var", FilePermissions::from_octal(0o755))?;
+    }
 
     Ok(())
+}
+
+/// Mount a filesystem from a storage device
+pub fn mount_filesystem(device_id: u32, mount_point: &str, fs_type: Option<FileSystemType>) -> FsResult<()> {
+    let filesystem: Box<dyn FileSystem> = match fs_type {
+        Some(FileSystemType::Ext2) => {
+            Box::new(ext4::Ext4FileSystem::new(device_id)?)
+        }
+        Some(FileSystemType::Fat32) => {
+            Box::new(fat32::Fat32FileSystem::new(device_id)?)
+        }
+        _ => {
+            // Auto-detect filesystem type
+            if let Ok(ext4_fs) = ext4::Ext4FileSystem::new(device_id) {
+                Box::new(ext4_fs)
+            } else if let Ok(fat32_fs) = fat32::Fat32FileSystem::new(device_id) {
+                Box::new(fat32_fs)
+            } else {
+                return Err(FsError::NotSupported);
+            }
+        }
+    };
+
+    VFS.mount(mount_point, filesystem, MountFlags::default())
+}
+
+/// Unmount a filesystem
+pub fn unmount_filesystem(mount_point: &str) -> FsResult<()> {
+    // Flush all buffers for the filesystem before unmounting
+    let _ = buffer::flush_all_buffers();
+    VFS.unmount(mount_point)
 }
 
 /// Get the global VFS manager
@@ -822,8 +876,8 @@ pub fn vfs() -> &'static VfsManager {
     &VFS
 }
 
-/// Get current time (placeholder)
+/// Get current time in milliseconds
 fn get_current_time() -> u64 {
-    // TODO: Get actual system time
-    1000000 // Placeholder timestamp
+    // Use system time for filesystem timestamps
+    crate::time::get_system_time_ms()
 }

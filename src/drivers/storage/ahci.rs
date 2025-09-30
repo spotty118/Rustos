@@ -414,7 +414,7 @@ impl AhciDriver {
     }
 
     /// Execute SATA command (production implementation)
-    fn execute_command(&mut self, port: u8, command: u8, lba: u64, count: u16) -> Result<(), StorageError> {
+    fn execute_command(&mut self, port: u8, command: u8, lba: u64, count: u16, buffer: Option<&mut [u8]>) -> Result<(), StorageError> {
         // Check port status
         let ssts = self.read_port_reg(port, AhciPortReg::Ssts);
         let det = ssts & 0xf;
@@ -424,16 +424,56 @@ impl AhciDriver {
 
         // Check if port is ready
         let cmd = self.read_port_reg(port, AhciPortReg::Cmd);
-        if (cmd & 0x8000) == 0 { // FRE - FIS Receive Enable
-            return Err(StorageError::DeviceNotReady);
+        if (cmd & PortCmd::FRE.bits()) == 0 {
+            return Err(StorageError::DeviceBusy);
         }
 
-        // Production implementation:
+        // Allocate DMA memory for command structures (simplified - using static addresses)
+        // NOTE: Command list and table still use static addresses - full refactor needed
+        let cmd_list_phys = 0x80000 + (port as u64 * 0x1000); // 4KB per port
+        let cmd_table_phys = cmd_list_phys + 0x400; // Command table after command list
+
+        // Store addresses for cleanup
+        self.command_lists[port as usize] = cmd_list_phys;
+        self.command_tables[port as usize] = cmd_table_phys;
+
+        // Allocate proper DMA buffer for data transfer - Production implementation
+        use crate::net::dma::{DmaBuffer, DMA_ALIGNMENT};
+
+        let data_size = (count as usize) * 512;
+        let mut _data_dma_buffer = DmaBuffer::allocate(data_size, DMA_ALIGNMENT)
+            .map_err(|_| StorageError::HardwareError)?;
+
+        // Translate virtual to physical address for hardware DMA
+        let buffer_phys = {
+            use x86_64::VirtAddr;
+            use crate::memory::get_memory_manager;
+
+            let virt_addr = VirtAddr::new(_data_dma_buffer.virtual_addr() as u64);
+            let memory_manager = get_memory_manager()
+                .ok_or(StorageError::HardwareError)?;
+
+            memory_manager.translate_addr(virt_addr)
+                .ok_or(StorageError::HardwareError)?
+                .as_u64()
+        };
+
+        // Set up command list and FIS receive area
+        self.write_port_reg(port, AhciPortReg::Clb, (cmd_list_phys & 0xFFFFFFFF) as u32);
+        self.write_port_reg(port, AhciPortReg::Clbu, ((cmd_list_phys >> 32) & 0xFFFFFFFF) as u32);
         
+        let fis_phys = cmd_list_phys + 0x200; // FIS area after command list
+        self.write_port_reg(port, AhciPortReg::Fb, (fis_phys & 0xFFFFFFFF) as u32);
+        self.write_port_reg(port, AhciPortReg::Fbu, ((fis_phys >> 32) & 0xFFFFFFFF) as u32);
+
         // 1. Set up command table with FIS
-        let cmd_table_base = self.command_tables[port as usize];
         unsafe {
-            let cmd_table = cmd_table_base as *mut u8;
+            let cmd_table = cmd_table_phys as *mut u8;
+            
+            // Clear command table
+            for i in 0..0x80 {
+                *cmd_table.add(i) = 0;
+            }
             
             // H2D Register FIS (Host to Device)
             *cmd_table = 0x27; // FIS Type: Register H2D
@@ -445,11 +485,11 @@ impl AhciDriver {
             *cmd_table.add(4) = (lba & 0xFF) as u8;
             *cmd_table.add(5) = ((lba >> 8) & 0xFF) as u8;
             *cmd_table.add(6) = ((lba >> 16) & 0xFF) as u8;
-            *cmd_table.add(7) = 0xE0; // Drive/Head
+            *cmd_table.add(7) = 0xE0 | (((lba >> 24) & 0x0F) as u8); // Drive/Head + LBA[27:24]
             
-            *cmd_table.add(8) = ((lba >> 24) & 0xFF) as u8;
-            *cmd_table.add(9) = ((lba >> 32) & 0xFF) as u8;
-            *cmd_table.add(10) = ((lba >> 40) & 0xFF) as u8;
+            *cmd_table.add(8) = ((lba >> 32) & 0xFF) as u8;
+            *cmd_table.add(9) = ((lba >> 40) & 0xFF) as u8;
+            *cmd_table.add(10) = ((lba >> 48) & 0xFF) as u8;
             *cmd_table.add(11) = 0; // Features (high)
             
             // Set sector count
@@ -457,56 +497,93 @@ impl AhciDriver {
             *cmd_table.add(13) = ((count >> 8) & 0xFF) as u8;
             *cmd_table.add(14) = 0; // Reserved
             *cmd_table.add(15) = 0; // Control
-            
-            // Clear remaining FIS bytes
-            for i in 16..64 {
-                *cmd_table.add(i) = 0;
-            }
         }
         
         // 2. Set up PRD table for data transfer
         if command == 0x25 || command == 0x35 { // READ DMA EXT / WRITE DMA EXT
-            let prd_table = (cmd_table_base + 0x80) as *mut u64;
             unsafe {
-                // Set up PRD entry - would be actual buffer in real implementation
-                let buffer_phys = 0x100000u64; // Placeholder physical address
-                *prd_table = buffer_phys;
-                *prd_table.add(1) = (count as u64 * 512 - 1) | (1u64 << 31); // Size and interrupt bit
+                let prd_table = (cmd_table_phys + 0x80) as *mut u32;
+                
+                // PRD Entry 0: Data Buffer Address (Low)
+                *prd_table = (buffer_phys & 0xFFFFFFFF) as u32;
+                // PRD Entry 1: Data Buffer Address (High)
+                *prd_table.add(1) = ((buffer_phys >> 32) & 0xFFFFFFFF) as u32;
+                // PRD Entry 2: Reserved
+                *prd_table.add(2) = 0;
+                // PRD Entry 3: Data Byte Count and Interrupt on Completion
+                *prd_table.add(3) = ((count as u32 * 512) - 1) | (1u32 << 31); // Size - 1 and interrupt bit
+                
+                // Copy write data to DMA buffer using proper buffer access
+                if command == 0x35 && buffer.is_some() {
+                    let src_buffer = buffer.as_ref().unwrap();
+                    let dst_ptr = _data_dma_buffer.virtual_addr();
+                    let copy_size = core::cmp::min(src_buffer.len(), data_size);
+                    core::ptr::copy_nonoverlapping(src_buffer.as_ptr(), dst_ptr, copy_size);
+                }
             }
         }
         
         // 3. Set up command header
-        let cmd_list_base = self.command_lists[port as usize];
         unsafe {
-            let cmd_header = cmd_list_base as *mut u32;
-            *cmd_header = (5 << 0) | // Command FIS length (5 DWORDs)
-                         (0 << 5) | // ATAPI bit
-                         (if command == 0x35 { 1 << 6 } else { 0 }) | // Write bit for write commands
-                         (1 << 16); // PRD Table Length
-            *cmd_header.add(1) = 0; // PRD Byte Count
-            *cmd_header.add(2) = (cmd_table_base & 0xFFFFFFFF) as u32; // Command Table Base Address
-            *cmd_header.add(3) = ((cmd_table_base >> 32) & 0xFFFFFFFF) as u32; // Command Table Base Address Upper
+            let cmd_header = cmd_list_phys as *mut u32;
+            
+            // Clear command header
+            for i in 0..8 {
+                *cmd_header.add(i) = 0;
+            }
+            
+            // Command Header DW0
+            let mut dw0 = 5u32; // Command FIS length (5 DWORDs)
+            if command == 0x35 { // Write command
+                dw0 |= 1 << 6; // Write bit
+            }
+            if command == 0x25 || command == 0x35 { // Data transfer commands
+                dw0 |= 1 << 16; // PRD Table Length = 1
+            }
+            *cmd_header = dw0;
+            
+            // Command Header DW1: PRD Byte Count (filled by hardware)
+            *cmd_header.add(1) = 0;
+            
+            // Command Header DW2-3: Command Table Base Address
+            *cmd_header.add(2) = (cmd_table_phys & 0xFFFFFFFF) as u32;
+            *cmd_header.add(3) = ((cmd_table_phys >> 32) & 0xFFFFFFFF) as u32;
         }
         
-        // 4. Issue command via CI register
+        // 4. Clear port interrupt status
+        let is = self.read_port_reg(port, AhciPortReg::Is);
+        self.write_port_reg(port, AhciPortReg::Is, is);
+        
+        // 5. Issue command via CI register
         self.write_port_reg(port, AhciPortReg::Ci, 1 << 0); // Issue command in slot 0
         
-        // 5. Wait for completion
-        let mut timeout = 1000000; // Timeout counter
+        // 6. Wait for completion
+        let mut timeout = 5000000; // 5 second timeout
         while timeout > 0 {
             let ci = self.read_port_reg(port, AhciPortReg::Ci);
             if (ci & 1) == 0 { // Command completed
                 break;
             }
+            
+            // Check for errors
+            let is = self.read_port_reg(port, AhciPortReg::Is);
+            if (is & 0x40000000) != 0 { // Task File Error
+                self.write_port_reg(port, AhciPortReg::Is, is);
+                return Err(StorageError::HardwareError);
+            }
+            
             timeout -= 1;
-            // In real implementation, add small delay here
+            // Small delay to prevent busy waiting
+            for _ in 0..1000 {
+                unsafe { core::arch::asm!("pause"); }
+            }
         }
         
         if timeout == 0 {
             return Err(StorageError::Timeout);
         }
         
-        // 6. Check for errors
+        // 7. Check for errors
         let serr = self.read_port_reg(port, AhciPortReg::Serr);
         if serr != 0 {
             self.write_port_reg(port, AhciPortReg::Serr, serr); // Clear errors
@@ -519,12 +596,29 @@ impl AhciDriver {
             return Err(StorageError::HardwareError);
         }
         
+        // 8. Copy read data from DMA buffer using proper buffer access
+        if command == 0x25 && buffer.is_some() {
+            unsafe {
+                let src_ptr = _data_dma_buffer.virtual_addr() as *const u8;
+                let dst_buffer = buffer.as_mut().unwrap();
+                let copy_size = core::cmp::min(dst_buffer.len(), data_size);
+                core::ptr::copy_nonoverlapping(src_ptr, dst_buffer.as_mut_ptr(), copy_size);
+            }
+        }
+        
         // Clear interrupt status
         self.write_port_reg(port, AhciPortReg::Is, is);
 
+        // Update statistics
         match command {
-            0x25 => self.stats.reads_total += 1,  // READ DMA EXT
-            0x35 => self.stats.writes_total += 1, // WRITE DMA EXT
+            0x25 => {
+                self.stats.reads_total += 1;
+                self.stats.bytes_read += (count as u64) * 512;
+            }
+            0x35 => {
+                self.stats.writes_total += 1;
+                self.stats.bytes_written += (count as u64) * 512;
+            }
             _ => {}
         }
         
@@ -605,12 +699,12 @@ impl StorageDriver for AhciDriver {
             return Err(StorageError::BufferTooSmall);
         }
 
-        // For now, just execute on port 0 (simplified)
-        self.execute_command(0, 0x25, start_sector, sector_count as u16)?;
+        if sector_count > 65536 {
+            return Err(StorageError::TransferTooLarge);
+        }
 
-        // Simulate reading data (in real implementation, DMA would fill the buffer)
-        self.stats.reads_total += 1;
-        self.stats.bytes_read += buffer.len() as u64;
+        // Execute read command on port 0 (first available port)
+        self.execute_command(0, 0x25, start_sector, sector_count as u16, Some(buffer))?;
 
         Ok(buffer.len())
     }
@@ -627,12 +721,13 @@ impl StorageDriver for AhciDriver {
             return Err(StorageError::BufferTooSmall);
         }
 
-        // For now, just execute on port 0 (simplified)
-        self.execute_command(0, 0x35, start_sector, sector_count as u16)?;
+        if sector_count > 65536 {
+            return Err(StorageError::TransferTooLarge);
+        }
 
-        // Simulate writing data
-        self.stats.writes_total += 1;
-        self.stats.bytes_written += buffer.len() as u64;
+        // Execute write command on port 0 (first available port)
+        let mut write_buffer = buffer.to_vec();
+        self.execute_command(0, 0x35, start_sector, sector_count as u16, Some(&mut write_buffer))?;
 
         Ok(buffer.len())
     }
@@ -643,7 +738,7 @@ impl StorageDriver for AhciDriver {
         }
 
         // Execute FLUSH CACHE command
-        self.execute_command(0, 0xE7, 0, 0)?;
+        self.execute_command(0, 0xE7, 0, 0, None)?;
         Ok(())
     }
 

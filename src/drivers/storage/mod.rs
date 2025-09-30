@@ -8,6 +8,8 @@ pub mod nvme;
 pub mod ide;
 pub mod usb_mass_storage;
 pub mod filesystem_interface;
+pub mod detection;
+pub mod pci_scan;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -404,7 +406,7 @@ impl StorageDriverManager {
             .ok_or(StorageError::DeviceNotFound)?;
 
         let result = device.driver.read_sectors(start_sector, buffer);
-        device.update_access(0); // TODO: proper timestamp
+        device.update_access(crate::time::get_system_time_ms());
 
         if result.is_ok() {
             self.stats.total_reads += 1;
@@ -424,7 +426,7 @@ impl StorageDriverManager {
             .ok_or(StorageError::DeviceNotFound)?;
 
         let result = device.driver.write_sectors(start_sector, buffer);
-        device.update_access(0); // TODO: proper timestamp
+        device.update_access(crate::time::get_system_time_ms());
 
         if result.is_ok() {
             self.stats.total_writes += 1;
@@ -486,4 +488,9 @@ pub fn write_storage_sectors(
 ) -> Result<usize, StorageError> {
     with_storage_manager(|manager| manager.write_sectors(device_id, start_sector, buffer))
         .ok_or(StorageError::DeviceNotFound)?
+}
+
+/// Initialize storage subsystem during kernel boot
+pub fn init_storage_subsystem() -> Result<detection::DetectionResults, StorageError> {
+    detection::detect_and_initialize_storage()
 }

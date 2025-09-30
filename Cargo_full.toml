@@ -2,6 +2,7 @@
 name = "rustos"
 version = "0.1.0"
 edition = "2021"
+
 authors = ["Rustos Team"]
 description = "An experimental OS kernel written in Rust with AI built in"
 

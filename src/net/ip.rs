@@ -313,24 +313,60 @@ fn is_packet_for_us(destination: &NetworkAddress) -> bool {
 fn forward_ipv4_packet(
     network_stack: &NetworkStack,
     mut header: IPv4Header,
-    _packet: PacketBuffer,
+    mut packet: PacketBuffer,
 ) -> NetworkResult<()> {
     // Decrement TTL
     if header.ttl <= 1 {
-        // Send ICMP Time Exceeded
-        // TTL expired - drop packet
+        // Send ICMP Time Exceeded (type 11, code 0)
+        send_icmp_time_exceeded(header.destination, header.source)?;
         return Ok(());
     }
     header.ttl -= 1;
 
     // Find route to destination
-    if let Some(_route) = network_stack.find_route(&header.destination) {
-        // Forward packet via route
-        // TODO: Implement actual packet forwarding
+    if let Some(route) = network_stack.find_route(&header.destination) {
+        // Recalculate checksum with updated TTL
+        header.checksum = header.calculate_checksum();
+
+        // Reconstruct packet with updated header
+        let payload = packet.read(packet.remaining()).unwrap_or(&[]).to_vec();
+
+        // Build new packet with updated header
+        let mut new_packet_data = Vec::with_capacity(IPV4_HEADER_MIN_SIZE + header.options.len() + payload.len());
+
+        // Serialize IPv4 header
+        new_packet_data.push(header.version_ihl);
+        new_packet_data.push(header.tos);
+        new_packet_data.extend_from_slice(&header.total_length.to_be_bytes());
+        new_packet_data.extend_from_slice(&header.identification.to_be_bytes());
+        new_packet_data.extend_from_slice(&header.flags_fragment.to_be_bytes());
+        new_packet_data.push(header.ttl);
+        new_packet_data.push(header.protocol);
+        new_packet_data.extend_from_slice(&header.checksum.to_be_bytes());
+
+        if let NetworkAddress::IPv4(src) = header.source {
+            new_packet_data.extend_from_slice(&src);
+        }
+        if let NetworkAddress::IPv4(dst) = header.destination {
+            new_packet_data.extend_from_slice(&dst);
+        }
+
+        // Add options if present
+        if !header.options.is_empty() {
+            new_packet_data.extend_from_slice(&header.options);
+        }
+
+        // Add payload
+        new_packet_data.extend_from_slice(&payload);
+
+        // Send via route interface
+        let packet_buffer = PacketBuffer::from_data(new_packet_data);
+        network_stack.send_packet(&route.interface, packet_buffer)?;
+
         Ok(())
     } else {
-        // No route found - drop packet
-        // Send ICMP Destination Unreachable
+        // No route found - send ICMP Destination Unreachable (type 3, code 0)
+        send_icmp_dest_unreachable(header.destination, header.source)?;
         Ok(())
     }
 }
@@ -339,24 +375,49 @@ fn forward_ipv4_packet(
 fn forward_ipv6_packet(
     network_stack: &NetworkStack,
     mut header: IPv6Header,
-    _packet: PacketBuffer,
+    mut packet: PacketBuffer,
 ) -> NetworkResult<()> {
     // Decrement hop limit
     if header.hop_limit <= 1 {
-        // Send ICMPv6 Time Exceeded
-        // Hop limit expired - drop packet
+        // Send ICMPv6 Time Exceeded (type 3, code 0)
+        send_icmpv6_time_exceeded(header.destination, header.source)?;
         return Ok(());
     }
     header.hop_limit -= 1;
 
     // Find route to destination
-    if let Some(_route) = network_stack.find_route(&header.destination) {
-        // Forward IPv6 packet via route
-        // TODO: Implement actual packet forwarding
+    if let Some(route) = network_stack.find_route(&header.destination) {
+        // Reconstruct packet with updated hop limit
+        let payload = packet.read(packet.remaining()).unwrap_or(&[]).to_vec();
+
+        // Build new packet with updated header
+        let mut new_packet_data = Vec::with_capacity(IPV6_HEADER_SIZE + payload.len());
+
+        // Serialize IPv6 header with updated hop limit
+        let version_tc_fl = header.version_tc_fl;
+        new_packet_data.extend_from_slice(&version_tc_fl.to_be_bytes());
+        new_packet_data.extend_from_slice(&header.payload_length.to_be_bytes());
+        new_packet_data.push(header.next_header);
+        new_packet_data.push(header.hop_limit);
+
+        if let NetworkAddress::IPv6(src) = header.source {
+            new_packet_data.extend_from_slice(&src);
+        }
+        if let NetworkAddress::IPv6(dst) = header.destination {
+            new_packet_data.extend_from_slice(&dst);
+        }
+
+        // Add payload
+        new_packet_data.extend_from_slice(&payload);
+
+        // Send via route interface
+        let packet_buffer = PacketBuffer::from_data(new_packet_data);
+        network_stack.send_packet(&route.interface, packet_buffer)?;
+
         Ok(())
     } else {
-        // No route found - drop packet
-        // Send ICMPv6 Destination Unreachable
+        // No route found - send ICMPv6 Destination Unreachable (type 1, code 0)
+        send_icmpv6_dest_unreachable(header.destination, header.source)?;
         Ok(())
     }
 }
@@ -373,6 +434,387 @@ impl From<u8> for Protocol {
             58 => Protocol::ICMPv6,
             _ => Protocol::TCP, // Default fallback
         }
+    }
+}
+
+/// Send IPv4 packet with specified protocol and payload
+pub fn send_ipv4_packet(
+    src_ip: NetworkAddress,
+    dst_ip: NetworkAddress,
+    protocol: u8,
+    payload: &[u8],
+) -> NetworkResult<()> {
+    use crate::net::network_stack;
+
+    // Create IPv4 header
+    let total_length = (IPV4_HEADER_MIN_SIZE + payload.len()) as u16;
+
+    let mut header_bytes = Vec::with_capacity(IPV4_HEADER_MIN_SIZE + payload.len());
+
+    // Version (4) and IHL (5 = 20 bytes)
+    header_bytes.push(0x45);
+    // TOS
+    header_bytes.push(0x00);
+    // Total length
+    header_bytes.push((total_length >> 8) as u8);
+    header_bytes.push((total_length & 0xFF) as u8);
+    // Identification
+    header_bytes.push(0x00);
+    header_bytes.push(0x00);
+    // Flags and Fragment Offset (don't fragment)
+    header_bytes.push(0x40);
+    header_bytes.push(0x00);
+    // TTL
+    header_bytes.push(64);
+    // Protocol
+    header_bytes.push(protocol);
+    // Checksum (calculate after)
+    let checksum_offset = header_bytes.len();
+    header_bytes.push(0x00);
+    header_bytes.push(0x00);
+
+    // Source IP
+    if let NetworkAddress::IPv4(src) = src_ip {
+        header_bytes.extend_from_slice(&src);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Destination IP
+    if let NetworkAddress::IPv4(dst) = dst_ip {
+        header_bytes.extend_from_slice(&dst);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Calculate header checksum
+    let checksum = calculate_ip_checksum(&header_bytes);
+    header_bytes[checksum_offset] = (checksum >> 8) as u8;
+    header_bytes[checksum_offset + 1] = (checksum & 0xFF) as u8;
+
+    // Add payload
+    header_bytes.extend_from_slice(payload);
+
+    // Wrap in Ethernet frame with proper MAC addresses
+    let stack = network_stack();
+    let interfaces = stack.list_interfaces();
+
+    let interface = interfaces.first().ok_or(NetworkError::NetworkUnreachable)?;
+
+    // Resolve destination MAC address
+    let dest_mac = if dst_ip.is_broadcast() {
+        // Broadcast address
+        NetworkAddress::Mac([0xFF; 6])
+    } else {
+        // Try to resolve MAC via ARP
+        match super::arp::lookup_arp(&dst_ip) {
+            Some(mac) => mac,
+            None => {
+                // MAC not in ARP cache - send ARP request and use broadcast as fallback
+                // In production, packet would be queued pending ARP resolution
+                let _ = super::arp::send_arp_request(dst_ip, interface.name.clone());
+                NetworkAddress::Mac([0xFF; 6])
+            }
+        }
+    };
+
+    // Get source MAC from interface
+    let src_mac = interface.mac_address;
+
+    // Build Ethernet frame: [dest MAC (6)] [src MAC (6)] [EtherType (2)] [IP packet]
+    let mut eth_frame = Vec::with_capacity(14 + header_bytes.len());
+
+    // Destination MAC (6 bytes)
+    if let NetworkAddress::Mac(mac) = dest_mac {
+        eth_frame.extend_from_slice(&mac);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Source MAC (6 bytes)
+    if let NetworkAddress::Mac(mac) = src_mac {
+        eth_frame.extend_from_slice(&mac);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // EtherType: 0x0800 for IPv4 (2 bytes, big-endian)
+    eth_frame.extend_from_slice(&[0x08, 0x00]);
+
+    // IP packet
+    eth_frame.extend_from_slice(&header_bytes);
+
+    // Send through network stack
+    let packet = PacketBuffer::from_data(eth_frame);
+    stack.send_packet(&interface.name, packet)
+}
+
+/// Calculate IP header checksum
+fn calculate_ip_checksum(data: &[u8]) -> u16 {
+    let mut sum = 0u32;
+
+    for chunk in data.chunks(2) {
+        if chunk.len() == 2 {
+            sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+        } else {
+            sum += (chunk[0] as u32) << 8;
+        }
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !sum as u16
+}
+
+/// Calculate ICMPv6 checksum with IPv6 pseudo-header
+/// RFC 4443 Section 2.3, RFC 2460 Section 8.1
+fn calculate_icmpv6_checksum(src: &[u8; 16], dst: &[u8; 16], packet: &[u8]) -> u16 {
+    let mut sum = 0u32;
+
+    // IPv6 pseudo-header checksum
+    // Source address (16 bytes)
+    for chunk in src.chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+
+    // Destination address (16 bytes)
+    for chunk in dst.chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+
+    // Upper-layer packet length (32 bits)
+    let packet_len = packet.len() as u32;
+    sum += packet_len >> 16;
+    sum += packet_len & 0xFFFF;
+
+    // Next header (ICMPv6 = 58, padded to 32 bits)
+    sum += 58;
+
+    // ICMPv6 packet data
+    for chunk in packet.chunks(2) {
+        if chunk.len() == 2 {
+            sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+        } else {
+            sum += (chunk[0] as u32) << 8;
+        }
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    // One's complement
+    !sum as u16
+}
+
+/// Send IPv6 packet with specified next header and payload
+pub fn send_ipv6_packet(
+    src_ip: NetworkAddress,
+    dst_ip: NetworkAddress,
+    next_header: u8,
+    payload: &[u8],
+) -> NetworkResult<()> {
+    use crate::net::network_stack;
+
+    // Create IPv6 header
+    let payload_length = payload.len() as u16;
+
+    let mut header_bytes = Vec::with_capacity(IPV6_HEADER_SIZE + payload.len());
+
+    // Version (4 bits = 6), Traffic Class (8 bits = 0), Flow Label (20 bits = 0)
+    let version_tc_fl = 0x60000000u32; // Version 6, TC 0, FL 0
+    header_bytes.extend_from_slice(&version_tc_fl.to_be_bytes());
+
+    // Payload Length (16 bits)
+    header_bytes.extend_from_slice(&payload_length.to_be_bytes());
+
+    // Next Header (8 bits)
+    header_bytes.push(next_header);
+
+    // Hop Limit (8 bits) - default to 64
+    header_bytes.push(64);
+
+    // Source IPv6 address (128 bits)
+    if let NetworkAddress::IPv6(src) = src_ip {
+        header_bytes.extend_from_slice(&src);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Destination IPv6 address (128 bits)
+    if let NetworkAddress::IPv6(dst) = dst_ip {
+        header_bytes.extend_from_slice(&dst);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Add payload
+    header_bytes.extend_from_slice(payload);
+
+    // Wrap in Ethernet frame with proper MAC addresses
+    let stack = network_stack();
+    let interfaces = stack.list_interfaces();
+
+    let interface = interfaces.first().ok_or(NetworkError::NetworkUnreachable)?;
+
+    // Resolve destination MAC address for IPv6
+    // For IPv6, we use NDP (Neighbor Discovery Protocol) instead of ARP
+    // For now, use broadcast/multicast MAC for IPv6
+    let dest_mac = if dst_ip.is_broadcast() || dst_ip.is_multicast() {
+        // IPv6 multicast MAC: 33:33:xx:xx:xx:xx where xx:xx:xx:xx are lower 32 bits of IPv6 address
+        if let NetworkAddress::IPv6(addr) = dst_ip {
+            NetworkAddress::Mac([0x33, 0x33, addr[12], addr[13], addr[14], addr[15]])
+        } else {
+            NetworkAddress::Mac([0xFF; 6]) // Fallback to broadcast
+        }
+    } else {
+        // Try neighbor discovery table lookup (similar to ARP for IPv4)
+        // For now, use broadcast as fallback
+        NetworkAddress::Mac([0xFF; 6])
+    };
+
+    // Get source MAC from interface
+    let src_mac = interface.mac_address;
+
+    // Build Ethernet frame: [dest MAC (6)] [src MAC (6)] [EtherType (2)] [IPv6 packet]
+    let mut eth_frame = Vec::with_capacity(14 + header_bytes.len());
+
+    // Destination MAC (6 bytes)
+    if let NetworkAddress::Mac(mac) = dest_mac {
+        eth_frame.extend_from_slice(&mac);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // Source MAC (6 bytes)
+    if let NetworkAddress::Mac(mac) = src_mac {
+        eth_frame.extend_from_slice(&mac);
+    } else {
+        return Err(NetworkError::InvalidAddress);
+    }
+
+    // EtherType: 0x86DD for IPv6 (2 bytes, big-endian)
+    eth_frame.extend_from_slice(&[0x86, 0xDD]);
+
+    // IPv6 packet
+    eth_frame.extend_from_slice(&header_bytes);
+
+    // Send through network stack
+    let packet = PacketBuffer::from_data(eth_frame);
+    stack.send_packet(&interface.name, packet)
+}
+
+/// Send ICMP Time Exceeded message
+fn send_icmp_time_exceeded(src_ip: NetworkAddress, dst_ip: NetworkAddress) -> NetworkResult<()> {
+    // ICMP Time Exceeded: Type 11, Code 0 (TTL exceeded in transit)
+    let mut icmp_packet = Vec::new();
+
+    icmp_packet.push(11u8); // Type: Time Exceeded
+    icmp_packet.push(0u8);  // Code: TTL exceeded in transit
+    icmp_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+    icmp_packet.extend_from_slice(&[0u8; 4]); // Unused
+
+    // Calculate checksum
+    let checksum = calculate_ip_checksum(&icmp_packet);
+    icmp_packet[2] = (checksum >> 8) as u8;
+    icmp_packet[3] = (checksum & 0xFF) as u8;
+
+    // Send through IP layer (protocol 1 = ICMP)
+    send_ipv4_packet(src_ip, dst_ip, 1, &icmp_packet)
+}
+
+/// Send ICMP Destination Unreachable message
+fn send_icmp_dest_unreachable(src_ip: NetworkAddress, dst_ip: NetworkAddress) -> NetworkResult<()> {
+    // ICMP Destination Unreachable: Type 3, Code 0 (Network unreachable)
+    let mut icmp_packet = Vec::new();
+
+    icmp_packet.push(3u8);  // Type: Destination Unreachable
+    icmp_packet.push(0u8);  // Code: Network unreachable
+    icmp_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+    icmp_packet.extend_from_slice(&[0u8; 4]); // Unused
+
+    // Calculate checksum
+    let checksum = calculate_ip_checksum(&icmp_packet);
+    icmp_packet[2] = (checksum >> 8) as u8;
+    icmp_packet[3] = (checksum & 0xFF) as u8;
+
+    // Send through IP layer (protocol 1 = ICMP)
+    send_ipv4_packet(src_ip, dst_ip, 1, &icmp_packet)
+}
+
+/// Send ICMPv6 Time Exceeded message
+fn send_icmpv6_time_exceeded(src_ip: NetworkAddress, dst_ip: NetworkAddress) -> NetworkResult<()> {
+    // ICMPv6 Time Exceeded: Type 3, Code 0 (Hop limit exceeded in transit)
+    // RFC 4443 Section 3.3
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (src_ip, dst_ip) {
+        let mut icmpv6_packet = Vec::new();
+
+        // ICMPv6 Type 3 (Time Exceeded), Code 0 (Hop limit exceeded in transit)
+        icmpv6_packet.push(3u8);
+        icmpv6_packet.push(0u8);
+        icmpv6_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+        icmpv6_packet.extend_from_slice(&[0u8; 4]); // Unused (must be zero)
+
+        // Note: RFC 4443 Section 2.4 recommends including as much of the invoking packet
+        // as possible without exceeding the minimum IPv6 MTU (1280 bytes).
+        // Full implementation would include:
+        // - Original IPv6 header (40 bytes)
+        // - As much of the original payload as fits (up to 1232 bytes after headers)
+        // Current implementation sends minimal error message without original packet data.
+        //
+        // Future enhancement: Pass original packet buffer to error functions and append:
+        //   let max_excerpt = 1280 - 40 (IPv6) - 8 (ICMPv6) = 1232 bytes
+        //   icmpv6_packet.extend_from_slice(&original_packet[..max_excerpt.min(len)])
+
+        // Calculate ICMPv6 checksum with IPv6 pseudo-header
+        let checksum = calculate_icmpv6_checksum(&src, &dst, &icmpv6_packet);
+        icmpv6_packet[2] = (checksum >> 8) as u8;
+        icmpv6_packet[3] = (checksum & 0xFF) as u8;
+
+        // Send via IPv6 layer with next header 58 (ICMPv6)
+        send_ipv6_packet(src_ip, dst_ip, 58, &icmpv6_packet)
+    } else {
+        Ok(()) // Not IPv6, silently ignore
+    }
+}
+
+/// Send ICMPv6 Destination Unreachable message
+fn send_icmpv6_dest_unreachable(src_ip: NetworkAddress, dst_ip: NetworkAddress) -> NetworkResult<()> {
+    // ICMPv6 Destination Unreachable: Type 1, Code 0 (No route to destination)
+    // RFC 4443 Section 3.1
+    if let (NetworkAddress::IPv6(src), NetworkAddress::IPv6(dst)) = (src_ip, dst_ip) {
+        let mut icmpv6_packet = Vec::new();
+
+        // ICMPv6 Type 1 (Destination Unreachable), Code 0 (No route to destination)
+        icmpv6_packet.push(1u8);
+        icmpv6_packet.push(0u8);
+        icmpv6_packet.extend_from_slice(&[0u8; 2]); // Checksum (calculated later)
+        icmpv6_packet.extend_from_slice(&[0u8; 4]); // Unused (must be zero)
+
+        // Note: RFC 4443 Section 2.4 recommends including as much of the invoking packet
+        // as possible without exceeding the minimum IPv6 MTU (1280 bytes).
+        // Full implementation would include:
+        // - Original IPv6 header (40 bytes)
+        // - As much of the original payload as fits (up to 1232 bytes after headers)
+        // Current implementation sends minimal error message without original packet data.
+        //
+        // Future enhancement: Pass original packet buffer to error functions and append:
+        //   let max_excerpt = 1280 - 40 (IPv6) - 8 (ICMPv6) = 1232 bytes
+        //   icmpv6_packet.extend_from_slice(&original_packet[..max_excerpt.min(len)])
+
+        // Calculate ICMPv6 checksum with IPv6 pseudo-header
+        let checksum = calculate_icmpv6_checksum(&src, &dst, &icmpv6_packet);
+        icmpv6_packet[2] = (checksum >> 8) as u8;
+        icmpv6_packet[3] = (checksum & 0xFF) as u8;
+
+        // Send via IPv6 layer with next header 58 (ICMPv6)
+        send_ipv6_packet(src_ip, dst_ip, 58, &icmpv6_packet)
+    } else {
+        Ok(()) // Not IPv6, silently ignore
     }
 }
 

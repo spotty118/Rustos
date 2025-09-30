@@ -77,12 +77,40 @@ impl LocalApic {
 
     /// Initialize the Local APIC
     pub fn init(&mut self) -> Result<(), &'static str> {
-        // Enable the Local APIC by setting bit 8 in the spurious interrupt vector register
-        let spurious = self.read(LocalApicRegister::SpuriousInterruptVector);
-        self.write(LocalApicRegister::SpuriousInterruptVector, spurious | 0x100);
+        // Validate APIC is present by checking version register
+        let version = self.read(LocalApicRegister::Version);
+        if version == 0 || version == 0xFFFFFFFF {
+            return Err("Local APIC not present or not accessible");
+        }
+        
+        // Clear error status register
+        self.write(LocalApicRegister::ErrorStatus, 0);
+        
+        // Clear any pending interrupts
+        self.write(LocalApicRegister::EndOfInterrupt, 0);
+        
+        // Set spurious interrupt vector and enable APIC
+        // Use vector 255 for spurious interrupts and enable APIC (bit 8)
+        self.write(LocalApicRegister::SpuriousInterruptVector, 0x1FF);
 
         // Set task priority to 0 (accept all interrupts)
         self.write(LocalApicRegister::TaskPriority, 0);
+        
+        // Configure timer to be masked initially
+        self.write(LocalApicRegister::TimerLocalVectorTable, 0x10000); // Masked
+        
+        // Configure performance counter to be masked
+        self.write(LocalApicRegister::PerformanceCounterLocalVectorTable, 0x10000); // Masked
+        
+        // Configure thermal sensor to be masked
+        self.write(LocalApicRegister::ThermalLocalVectorTable, 0x10000); // Masked
+        
+        // Configure LINT0 and LINT1 to be masked initially
+        self.write(LocalApicRegister::LocalInterrupt0VectorTable, 0x10000); // Masked
+        self.write(LocalApicRegister::LocalInterrupt1VectorTable, 0x10000); // Masked
+        
+        // Configure error interrupt
+        self.write(LocalApicRegister::ErrorVectorTable, 0x10000); // Masked for now
 
         Ok(())
     }
@@ -121,11 +149,47 @@ impl IoApic {
             max_redirections: 0,
         };
 
-        // Read version register to get max redirection entries
+        // Validate IO APIC is accessible
         let version = ioapic.read_register(IoApicRegister::Version);
+        if version == 0 || version == 0xFFFFFFFF {
+            return Err("IO APIC not accessible");
+        }
+        
+        // Extract max redirection entries (bits 16-23)
         ioapic.max_redirections = ((version >> 16) & 0xFF) as u8;
+        
+        // Validate reasonable number of redirection entries
+        if ioapic.max_redirections == 0 || ioapic.max_redirections > 240 {
+            return Err("Invalid IO APIC redirection entry count");
+        }
+        
+        // Validate and set IO APIC ID
+        let current_id = (ioapic.read_register(IoApicRegister::Id) >> 24) & 0xFF;
+        if current_id as u8 != id {
+            // Try to set the correct ID
+            ioapic.write_register(IoApicRegister::Id, (id as u32) << 24);
+            
+            // Verify the ID was set correctly
+            let new_id = (ioapic.read_register(IoApicRegister::Id) >> 24) & 0xFF;
+            if new_id as u8 != id {
+                crate::serial_println!("Warning: IO APIC ID mismatch - expected {}, got {}", id, new_id);
+            }
+        }
+        
+        // Initialize all redirection entries to masked state
+        ioapic.init_redirection_table()?;
 
         Ok(ioapic)
+    }
+    
+    /// Initialize redirection table with all entries masked
+    fn init_redirection_table(&mut self) -> Result<(), &'static str> {
+        for irq in 0..=self.max_redirections {
+            // Set entry to masked (bit 16 = 1), edge-triggered, active-high, vector 0
+            let masked_entry = 0x10000u64; // Masked bit set
+            self.write_redirection_entry(irq, masked_entry);
+        }
+        Ok(())
     }
 
     /// Read from IO APIC register
@@ -271,6 +335,11 @@ impl ApicSystem {
 
     /// Configure interrupt routing for a specific IRQ
     pub fn configure_irq(&mut self, irq: u8, vector: u8, cpu_id: u8) -> Result<(), &'static str> {
+        // Validate vector is in valid range (32-255)
+        if vector < 32 {
+            return Err("Interrupt vector must be >= 32");
+        }
+        
         // Check for interrupt overrides first
         let (gsi, flags) = self.resolve_irq_to_gsi(irq);
         
@@ -282,20 +351,39 @@ impl ApicSystem {
 
         let local_irq = (gsi - ioapic.gsi_base()) as u8;
         
+        // Validate local IRQ is within range
+        if local_irq > ioapic.max_redirections() {
+            return Err("IRQ exceeds IO APIC redirection table size");
+        }
+        
         // Build redirection entry
         let mut entry = vector as u64;
-        entry |= (cpu_id as u64) << 56; // Destination CPU
         
-        // Apply flags from interrupt override
-        if flags & 0x02 != 0 { // Active low
+        // Set destination mode to physical (bit 11 = 0) and destination CPU
+        entry |= (cpu_id as u64) << 56; // Destination CPU in bits 56-63
+        
+        // Set delivery mode to fixed (bits 8-10 = 000)
+        // entry |= 0 << 8; // Fixed delivery mode (default)
+        
+        // Apply polarity and trigger mode from interrupt override flags
+        if flags & 0x02 != 0 { // Active low polarity
             entry |= 1 << 13;
         }
+        // Default is active high (bit 13 = 0)
+        
         if flags & 0x08 != 0 { // Level triggered
             entry |= 1 << 15;
         }
+        // Default is edge triggered (bit 15 = 0)
+        
+        // Ensure interrupt is not masked (bit 16 = 0)
+        // entry &= !(1 << 16); // Already 0 by default
 
+        // Write the redirection entry
         ioapic.write_redirection_entry(local_irq, entry);
         
+        crate::serial_println!("Configured IRQ {} -> GSI {} -> Vector {} on CPU {}", 
+                              irq, gsi, vector, cpu_id);
 
         Ok(())
     }

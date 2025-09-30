@@ -16,6 +16,7 @@ pub mod sync;
 pub mod integration;
 pub mod thread;
 pub mod ipc;
+pub mod elf_loader;
 
 /// Process ID type
 pub type Pid = u32;
@@ -116,6 +117,14 @@ pub struct MemoryInfo {
     pub vm_start: u64,
     /// Virtual memory size
     pub vm_size: u64,
+    /// Code segment start address
+    pub code_start: u64,
+    /// Code segment size
+    pub code_size: u64,
+    /// Data segment start address
+    pub data_start: u64,
+    /// Data segment size
+    pub data_size: u64,
     /// Heap start address
     pub heap_start: u64,
     /// Heap size
@@ -132,7 +141,11 @@ impl Default for MemoryInfo {
             page_directory: 0,
             vm_start: 0x400000,  // 4MB
             vm_size: 0x100000,   // 1MB default
-            heap_start: 0x500000, // 5MB
+            code_start: 0x400000, // 4MB
+            code_size: 0,        // Set during load
+            data_start: 0x500000, // 5MB
+            data_size: 0,        // Set during load
+            heap_start: 0x600000, // 6MB
             heap_size: 0x100000,  // 1MB
             stack_start: 0x7FFFFF000, // Near top of user space
             stack_size: 0x2000,   // 8KB default stack
@@ -171,6 +184,18 @@ pub struct ProcessControlBlock {
     pub sched_info: SchedulingInfo,
     /// Main thread ID for this process
     pub main_thread: Option<thread::Tid>,
+    /// File offsets for seek operations
+    pub file_offsets: BTreeMap<u32, usize>,
+    /// Wake time for sleeping processes
+    pub wake_time: Option<u64>,
+    /// Signal handlers
+    pub signal_handlers: BTreeMap<u32, u64>,
+    /// Pending signals
+    pub pending_signals: alloc::vec::Vec<u32>,
+    /// Program entry point address
+    pub entry_point: u64,
+    /// File descriptors map (alias for compatibility)
+    pub file_descriptors: BTreeMap<u32, FileDescriptor>,
 }
 
 /// File descriptor information
@@ -209,6 +234,7 @@ pub struct SchedulingInfo {
 impl ProcessControlBlock {
     /// Create a new PCB with the given PID and parent
     pub fn new(pid: Pid, parent_pid: Option<Pid>, name: &str) -> Self {
+        let fd_table = BTreeMap::new();
         let mut pcb = Self {
             pid,
             parent_pid,
@@ -220,7 +246,7 @@ impl ProcessControlBlock {
             cpu_time: 0,
             creation_time: get_system_time(),
             exit_status: None,
-            fd_table: BTreeMap::new(),
+            fd_table: fd_table.clone(),
             next_fd: 3, // 0, 1, 2 reserved for stdin, stdout, stderr
             sched_info: SchedulingInfo {
                 time_slice: 10, // 10ms default
@@ -230,6 +256,12 @@ impl ProcessControlBlock {
                 cpu_affinity: 0xFFFFFFFFFFFFFFFF, // All CPUs
             },
             main_thread: None,
+            file_offsets: BTreeMap::new(),
+            wake_time: None,
+            signal_handlers: BTreeMap::new(),
+            pending_signals: alloc::vec::Vec::new(),
+            entry_point: 0,
+            file_descriptors: fd_table,
         };
 
         // Set process name
@@ -238,21 +270,29 @@ impl ProcessControlBlock {
         pcb.name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
         // Initialize standard file descriptors
-        pcb.fd_table.insert(0, FileDescriptor {
+        let stdin_fd = FileDescriptor {
             fd_type: FileDescriptorType::StandardInput,
             flags: 0,
             offset: 0,
-        });
-        pcb.fd_table.insert(1, FileDescriptor {
+        };
+        let stdout_fd = FileDescriptor {
             fd_type: FileDescriptorType::StandardOutput,
             flags: 0,
             offset: 0,
-        });
-        pcb.fd_table.insert(2, FileDescriptor {
+        };
+        let stderr_fd = FileDescriptor {
             fd_type: FileDescriptorType::StandardError,
             flags: 0,
             offset: 0,
-        });
+        };
+
+        pcb.fd_table.insert(0, stdin_fd.clone());
+        pcb.fd_table.insert(1, stdout_fd.clone());
+        pcb.fd_table.insert(2, stderr_fd.clone());
+
+        pcb.file_descriptors.insert(0, stdin_fd);
+        pcb.file_descriptors.insert(1, stdout_fd);
+        pcb.file_descriptors.insert(2, stderr_fd);
 
         pcb
     }
@@ -613,26 +653,27 @@ pub fn init() -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Simple system time counter (should be replaced with proper timer)
-static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
-
-/// Get current system time in ticks
+/// Get current system time in milliseconds (integrated with hardware timer system)
 pub fn get_system_time() -> u64 {
-    SYSTEM_TIME.load(Ordering::SeqCst)
+    // Use the hardware timer system for accurate time
+    crate::time::uptime_ms()
 }
 
-/// Increment system time (called by timer interrupt)
+/// Update system time tracking (called by timer interrupt)
 pub fn tick_system_time() {
-    SYSTEM_TIME.fetch_add(1, Ordering::SeqCst);
+    // This function is now a no-op since we use hardware timer system directly
+    // The actual time tracking is handled by the hardware timer interrupt in time.rs
+    // This function is kept for compatibility with existing code
 }
 
 use core::sync::atomic::AtomicU64;
 
-/// Get the current process ID
+/// Get the currently running process ID
+///
+/// Returns the PID of the process currently executing on this CPU.
+/// Returns 0 if running in kernel context with no user process.
 pub fn current_pid() -> Pid {
-    // TODO: Get from actual scheduler context when available
-    // For now, return PID 1 as a fallback
-    1
+    get_process_manager().current_process()
 }
 
 /// Terminate the current process

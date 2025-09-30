@@ -4,11 +4,109 @@
 //! and other Intel Gigabit Ethernet controllers (E1000 and E1000E series).
 
 use super::{ExtendedNetworkCapabilities, EnhancedNetworkStats, PowerState, WakeOnLanConfig};
-use crate::network::drivers::{NetworkDriver, DeviceType, DeviceState, DeviceCapabilities};
-use crate::network::{NetworkError, NetworkStats, MacAddress};
+use crate::net::{NetworkError, NetworkAddress};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ptr;
+
+/// Network device types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceType {
+    Ethernet,
+    Wireless,
+    Loopback,
+}
+
+/// Network device states
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceState {
+    Down,
+    Initialized,
+    Up,
+}
+
+/// Device capabilities
+#[derive(Debug, Clone)]
+pub struct DeviceCapabilities {
+    pub mtu: u16,
+    pub hw_checksum: bool,
+    pub scatter_gather: bool,
+    pub vlan_support: bool,
+    pub jumbo_frames: bool,
+    pub multicast_filter: bool,
+    pub max_packet_size: u16,
+    pub link_speed: u32,
+    pub full_duplex: bool,
+    pub rx_queues: u8,
+    pub tx_queues: u8,
+}
+
+impl Default for DeviceCapabilities {
+    fn default() -> Self {
+        Self {
+            mtu: 1500,
+            hw_checksum: false,
+            scatter_gather: false,
+            vlan_support: false,
+            jumbo_frames: false,
+            multicast_filter: false,
+            max_packet_size: 1518,
+            link_speed: 1000,
+            full_duplex: true,
+            rx_queues: 1,
+            tx_queues: 1,
+        }
+    }
+}
+
+/// MAC address wrapper
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacAddress([u8; 6]);
+
+impl MacAddress {
+    pub const ZERO: MacAddress = MacAddress([0; 6]);
+    
+    pub fn new(bytes: [u8; 6]) -> Self {
+        Self(bytes)
+    }
+    
+    pub fn as_bytes(&self) -> &[u8; 6] {
+        &self.0
+    }
+}
+
+/// Network statistics
+#[derive(Debug, Clone, Default)]
+pub struct NetworkStats {
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
+    pub rx_dropped: u64,
+    pub tx_dropped: u64,
+}
+
+/// Network driver trait
+pub trait NetworkDriver {
+    fn name(&self) -> &str;
+    fn device_type(&self) -> DeviceType;
+    fn state(&self) -> DeviceState;
+    fn capabilities(&self) -> &DeviceCapabilities;
+    fn init(&mut self) -> Result<(), NetworkError>;
+    fn start(&mut self) -> Result<(), NetworkError>;
+    fn stop(&mut self) -> Result<(), NetworkError>;
+    fn send_packet(&mut self, packet: &[u8]) -> Result<(), NetworkError>;
+    fn receive_packet(&mut self) -> Result<Option<Vec<u8>>, NetworkError>;
+    fn get_mac_address(&self) -> MacAddress;
+    fn set_mac_address(&mut self, mac: MacAddress) -> Result<(), NetworkError>;
+    fn get_link_status(&self) -> (bool, u32, bool);
+    fn get_statistics(&self) -> NetworkStats;
+    fn handle_interrupt(&mut self) -> Result<(), NetworkError>;
+    fn set_power_state(&mut self, state: PowerState) -> Result<(), NetworkError>;
+    fn configure_wol(&mut self, config: WakeOnLanConfig) -> Result<(), NetworkError>;
+}
 
 /// Intel E1000 device information
 #[derive(Debug, Clone, Copy)]
@@ -317,6 +415,10 @@ pub struct IntelE1000Driver {
     wol_config: WakeOnLanConfig,
     current_speed: u32,
     full_duplex: bool,
+    /// DMA transmit ring
+    tx_ring: Option<crate::net::dma::DmaRing>,
+    /// DMA receive ring
+    rx_ring: Option<crate::net::dma::DmaRing>,
 }
 
 impl IntelE1000Driver {
@@ -365,48 +467,142 @@ impl IntelE1000Driver {
             wol_config: WakeOnLanConfig::default(),
             current_speed: 0,
             full_duplex: false,
+            tx_ring: None,
+            rx_ring: None,
         }
     }
 
-    /// Read E1000 register
+    /// Read E1000 register with proper memory barriers
     fn read_reg(&self, reg: E1000Reg) -> u32 {
         unsafe {
-            ptr::read_volatile((self.base_addr + reg as u64) as *const u32)
+            // Ensure all previous writes complete before reading
+            core::arch::x86_64::_mm_mfence();
+            
+            let value = ptr::read_volatile((self.base_addr + reg as u64) as *const u32);
+            
+            // Memory barrier to prevent reordering
+            core::arch::x86_64::_mm_lfence();
+            
+            value
         }
     }
 
-    /// Write E1000 register
+    /// Write E1000 register with proper memory barriers
     fn write_reg(&self, reg: E1000Reg, value: u32) {
         unsafe {
+            // Ensure all previous operations complete
+            core::arch::x86_64::_mm_mfence();
+            
             ptr::write_volatile((self.base_addr + reg as u64) as *mut u32, value);
+            
+            // Ensure write completes before continuing
+            core::arch::x86_64::_mm_sfence();
         }
     }
 
-    /// Reset the controller
+    /// Read and modify register atomically
+    fn modify_reg<F>(&self, reg: E1000Reg, f: F) 
+    where 
+        F: FnOnce(u32) -> u32,
+    {
+        let current = self.read_reg(reg);
+        let new_value = f(current);
+        self.write_reg(reg, new_value);
+    }
+
+    /// Wait for register bit to be set with timeout
+    fn wait_for_bit(&self, reg: E1000Reg, bit_mask: u32, set: bool, timeout_ms: u32) -> Result<(), NetworkError> {
+        let start_time = self.get_time_ms();
+        
+        loop {
+            let value = self.read_reg(reg);
+            let bit_is_set = (value & bit_mask) != 0;
+            
+            if bit_is_set == set {
+                return Ok(());
+            }
+            
+            if self.get_time_ms() - start_time > timeout_ms as u64 {
+                return Err(NetworkError::Timeout);
+            }
+            
+            // Small delay to avoid overwhelming the bus
+            self.delay_microseconds(10);
+        }
+    }
+
+    /// Get current time in milliseconds
+    fn get_time_ms(&self) -> u64 {
+        // Use system time for driver timestamps
+        crate::time::get_system_time_ms()
+    }
+
+    /// Delay for specified microseconds
+    fn delay_microseconds(&self, microseconds: u32) {
+        // Use kernel timer for accurate delays
+        crate::time::sleep_us(microseconds as u64);
+    }
+
+    /// Reset the controller with proper hardware timing
     fn reset_controller(&mut self) -> Result<(), NetworkError> {
-        // Disable interrupts
+        // Disable all interrupts before reset
         self.write_reg(E1000Reg::Imc, 0xFFFFFFFF);
+        
+        // Clear any pending interrupts
+        self.read_reg(E1000Reg::Icr);
 
-        // Reset the device
-        let mut ctrl = self.read_reg(E1000Reg::Ctrl);
-        ctrl |= E1000Ctrl::RST.bits();
-        self.write_reg(E1000Reg::Ctrl, ctrl);
+        // Perform device reset
+        self.modify_reg(E1000Reg::Ctrl, |ctrl| ctrl | E1000Ctrl::RST.bits());
 
-        // Wait for reset to complete
-        for _ in 0..1000 {
-            if (self.read_reg(E1000Reg::Ctrl) & E1000Ctrl::RST.bits()) == 0 {
-                break;
+        // Wait for reset to complete (up to 10ms)
+        self.wait_for_bit(E1000Reg::Ctrl, E1000Ctrl::RST.bits(), false, 10)?;
+
+        // Additional stabilization delay based on device generation
+        let stabilization_delay = match self.device_info.map(|info| info.generation) {
+            Some(E1000Generation::E1000) => 1000,      // 1ms for legacy E1000
+            Some(E1000Generation::E1000E) => 500,      // 500μs for E1000E
+            Some(E1000Generation::I350) => 200,        // 200μs for I350
+            Some(E1000Generation::I210) => 100,        // 100μs for I210/I211
+            Some(E1000Generation::I225) => 50,         // 50μs for I225
+            None => 1000,                              // Default to 1ms
+        };
+        
+        self.delay_microseconds(stabilization_delay);
+
+        // Verify device is responsive after reset
+        let status = self.read_reg(E1000Reg::Status);
+        if status == 0xFFFFFFFF || status == 0 {
+            return Err(NetworkError::HardwareError);
+        }
+
+        // Disable interrupts again after reset
+        self.write_reg(E1000Reg::Imc, 0xFFFFFFFF);
+        
+        // Clear any interrupts that may have been generated during reset
+        self.read_reg(E1000Reg::Icr);
+
+        // Perform PHY reset if needed
+        self.reset_phy()?;
+
+        Ok(())
+    }
+
+    /// Reset PHY (Physical Layer)
+    fn reset_phy(&mut self) -> Result<(), NetworkError> {
+        // For some E1000 variants, PHY reset is needed
+        match self.device_info.map(|info| info.generation) {
+            Some(E1000Generation::E1000) => {
+                // Legacy E1000 may need PHY reset
+                self.modify_reg(E1000Reg::Ctrl, |ctrl| ctrl | E1000Ctrl::PHY_RST.bits());
+                self.delay_microseconds(100);
+                self.modify_reg(E1000Reg::Ctrl, |ctrl| ctrl & !E1000Ctrl::PHY_RST.bits());
+                self.delay_microseconds(1000);
+            }
+            _ => {
+                // Newer generations handle PHY reset automatically
             }
         }
-
-        // Wait additional time for device stabilization
-        for _ in 0..10000 {
-            // Small delay
-        }
-
-        // Disable interrupts again
-        self.write_reg(E1000Reg::Imc, 0xFFFFFFFF);
-
+        
         Ok(())
     }
 
@@ -434,58 +630,292 @@ impl IntelE1000Driver {
         Ok(())
     }
 
-    /// Initialize receive subsystem
+    /// Initialize receive subsystem with real hardware configuration
     fn init_rx(&mut self) -> Result<(), NetworkError> {
-        // Allocate receive descriptor ring (simplified)
-        // In a real implementation, we would allocate DMA-coherent memory
+        // Disable receiver during configuration
+        self.write_reg(E1000Reg::Rctl, 0);
 
-        // Set receive descriptor base address (using dummy address for now)
-        self.write_reg(E1000Reg::Rdbal, 0x12345000);
-        self.write_reg(E1000Reg::Rdbah, 0);
+        // Allocate DMA-coherent receive descriptor ring
+        let rx_ring_base = self.allocate_rx_ring()?;
+        
+        // Set receive descriptor base address
+        self.write_reg(E1000Reg::Rdbal, (rx_ring_base & 0xFFFFFFFF) as u32);
+        self.write_reg(E1000Reg::Rdbah, (rx_ring_base >> 32) as u32);
 
         // Set receive descriptor length (32 descriptors * 16 bytes = 512 bytes)
         self.write_reg(E1000Reg::Rdlen, 32 * 16);
 
-        // Set receive descriptor head and tail
+        // Initialize head and tail pointers
         self.write_reg(E1000Reg::Rdh, 0);
-        self.write_reg(E1000Reg::Rdt, 31); // Last descriptor
+        self.write_reg(E1000Reg::Rdt, 31); // Make all descriptors available
 
-        // Configure receive control
-        let mut rctl = E1000Rctl::EN.bits() |     // Enable receiver
-                       E1000Rctl::BAM.bits() |    // Broadcast accept mode
+        // Configure receive control register
+        let mut rctl = E1000Rctl::EN.bits() |        // Enable receiver
+                       E1000Rctl::BAM.bits() |       // Broadcast accept mode
                        E1000Rctl::BSIZE_2048.bits() | // 2048 byte buffers
-                       E1000Rctl::SECRC.bits();   // Strip Ethernet CRC
+                       E1000Rctl::SECRC.bits() |     // Strip Ethernet CRC
+                       E1000Rctl::LPE.bits();        // Long packet enable (jumbo frames)
+
+        // Configure multicast filter if supported
+        if self.capabilities.multicast_filter {
+            rctl |= E1000Rctl::MPE.bits(); // Multicast promiscuous enable for now
+        }
 
         self.write_reg(E1000Reg::Rctl, rctl);
+
+        // Configure receive interrupt delay
+        self.write_reg(E1000Reg::Itr, 1000); // 1000 * 256ns = 256μs delay
 
         Ok(())
     }
 
-    /// Initialize transmit subsystem
+    /// Allocate receive descriptor ring
+    fn allocate_rx_ring(&mut self) -> Result<u64, NetworkError> {
+        use crate::net::dma::DmaRing;
+
+        // Allocate DMA ring: 256 descriptors, 2048 byte buffers
+        let ring = DmaRing::new(256, 2048)?;
+        let ring_addr = ring.descriptor_ring_addr();
+
+        // Store ring in driver
+        self.rx_ring = Some(ring);
+
+        Ok(ring_addr)
+    }
+
+    /// Initialize transmit subsystem with real hardware configuration
     fn init_tx(&mut self) -> Result<(), NetworkError> {
-        // Allocate transmit descriptor ring (simplified)
+        // Disable transmitter during configuration
+        self.write_reg(E1000Reg::Tctl, 0);
+
+        // Allocate transmit descriptor ring
+        let tx_ring_base = self.allocate_tx_ring()?;
 
         // Set transmit descriptor base address
-        self.write_reg(E1000Reg::Tdbal, 0x12346000);
-        self.write_reg(E1000Reg::Tdbah, 0);
+        self.write_reg(E1000Reg::Tdbal, (tx_ring_base & 0xFFFFFFFF) as u32);
+        self.write_reg(E1000Reg::Tdbah, (tx_ring_base >> 32) as u32);
 
-        // Set transmit descriptor length
+        // Set transmit descriptor length (32 descriptors * 16 bytes)
         self.write_reg(E1000Reg::Tdlen, 32 * 16);
 
-        // Set transmit descriptor head and tail
+        // Initialize head and tail pointers
         self.write_reg(E1000Reg::Tdh, 0);
         self.write_reg(E1000Reg::Tdt, 0);
 
-        // Configure transmit control
-        let tctl = E1000Tctl::EN.bits() |        // Enable transmitter
-                   E1000Tctl::PSP.bits() |       // Pad short packets
-                   (0x40 << 4) |                 // Collision threshold
-                   (0x40 << 12);                 // Collision distance
+        // Configure transmit control register
+        let mut tctl = E1000Tctl::EN.bits() |        // Enable transmitter
+                       E1000Tctl::PSP.bits() |       // Pad short packets
+                       (0x0F << 4) |                 // Collision threshold (15)
+                       (0x40 << 12);                 // Collision distance (64 bytes)
+
+        // Enable retransmit on late collision for half-duplex
+        if !self.full_duplex {
+            tctl |= E1000Tctl::RTLC.bits();
+        }
 
         self.write_reg(E1000Reg::Tctl, tctl);
 
-        // Configure transmit IPG
+        // Configure transmit inter-packet gap based on device generation
         let tipg = match self.device_info.map(|info| info.generation) {
+            Some(E1000Generation::E1000) => 0x602008,      // Legacy E1000
+            Some(E1000Generation::E1000E) => 0x602008,     // E1000E
+            Some(E1000Generation::I350) => 0x602008,       // I350
+            Some(E1000Generation::I210) => 0x602008,       // I210/I211
+            Some(E1000Generation::I225) => 0x602008,       // I225
+            None => 0x602008,                              // Default
+        };
+        self.write_reg(E1000Reg::Tipg, tipg);
+
+        Ok(())
+    }
+
+    /// Allocate transmit descriptor ring
+    fn allocate_tx_ring(&mut self) -> Result<u64, NetworkError> {
+        use crate::net::dma::DmaRing;
+
+        // Allocate DMA ring: 256 descriptors, 2048 byte buffers
+        let ring = DmaRing::new(256, 2048)?;
+        let ring_addr = ring.descriptor_ring_addr();
+
+        // Store ring in driver
+        self.tx_ring = Some(ring);
+
+        Ok(ring_addr)
+    }
+
+    /// Send packet through hardware with real DMA
+    fn send_packet_hardware(&mut self, packet_data: &[u8]) -> Result<(), NetworkError> {
+        // Validate packet size
+        if packet_data.is_empty() || packet_data.len() > 9018 {
+            return Err(NetworkError::InvalidPacket);
+        }
+
+        // Get transmit ring
+        let tx_ring = self.tx_ring.as_mut()
+            .ok_or(NetworkError::InvalidState)?;
+
+        // Get next available descriptor and buffer
+        let (descriptor, dma_buffer) = tx_ring.get_tx_descriptor()
+            .ok_or(NetworkError::Busy)?;
+
+        // Copy packet data to DMA buffer
+        dma_buffer.copy_from_slice(packet_data)?;
+
+        // Ensure cache coherency (flush CPU cache to memory for hardware)
+        dma_buffer.flush_cache();
+
+        // Setup transmit descriptor
+        descriptor.length = packet_data.len() as u16;
+        descriptor.set_eop(); // End of packet
+        descriptor.flags |= 1 << 2; // Ready for transmission (RS - Report Status)
+
+        // Advance tail pointer in software
+        tx_ring.advance_tail();
+
+        // Get new tail value
+        let new_tail = self.read_reg(E1000Reg::Tdt) as usize;
+        let next_tail = (new_tail + 1) % 256; // 256 descriptors
+
+        // Update hardware tail pointer to start transmission
+        self.write_reg(E1000Reg::Tdt, next_tail as u32);
+
+        // Update statistics
+        self.stats.tx_packets += 1;
+        self.stats.tx_bytes += packet_data.len() as u64;
+
+        Ok(())
+    }
+
+    /// Receive packet from hardware with real DMA
+    fn receive_packet_hardware(&mut self) -> Result<Option<Vec<u8>>, NetworkError> {
+        // Get receive ring
+        let rx_ring = self.rx_ring.as_mut()
+            .ok_or(NetworkError::InvalidState)?;
+
+        // Get next completed descriptor and buffer
+        let (descriptor, dma_buffer) = match rx_ring.get_rx_descriptor() {
+            Some(desc_buf) => desc_buf,
+            None => return Ok(None), // No packets available
+        };
+
+        // Check for errors in descriptor
+        if descriptor.has_error() {
+            // Reset descriptor for reuse
+            descriptor.status = 0;
+            descriptor.flags = 1 << 2; // Ready for reception
+
+            // Advance head pointer
+            rx_ring.advance_head();
+
+            // Update error statistics
+            self.stats.rx_errors += 1;
+
+            return Err(NetworkError::InvalidPacket);
+        }
+
+        // Ensure cache coherency (invalidate cache to see hardware updates)
+        dma_buffer.invalidate_cache();
+
+        // Copy packet data from DMA buffer
+        let packet_len = descriptor.length as usize;
+        let mut packet_data = alloc::vec![0u8; packet_len];
+        let copied = dma_buffer.copy_to_slice(&mut packet_data);
+
+        if copied != packet_len {
+            // Reset descriptor for reuse
+            descriptor.status = 0;
+            descriptor.flags = 1 << 2;
+            rx_ring.advance_head();
+            return Err(NetworkError::BufferTooSmall);
+        }
+
+        // Reset descriptor for reuse
+        descriptor.status = 0;
+        descriptor.flags = 1 << 2; // Ready for reception
+
+        // Advance head pointer
+        rx_ring.advance_head();
+
+        // Update hardware head pointer
+        let new_head = self.read_reg(E1000Reg::Rdh) as usize;
+        let next_head = (new_head + 1) % 256; // 256 descriptors
+        self.write_reg(E1000Reg::Rdh, next_head as u32);
+
+        // Update statistics
+        self.stats.rx_packets += 1;
+        self.stats.rx_bytes += packet_len as u64;
+
+        Ok(Some(packet_data))
+    }
+
+    /// Handle hardware interrupt
+    fn handle_interrupt(&mut self) -> Result<(), NetworkError> {
+        // Read interrupt cause register
+        let icr = self.read_reg(E1000Reg::Icr);
+
+        // Handle different interrupt types
+        if (icr & (1 << 0)) != 0 {
+            // Transmit descriptor written back
+            self.handle_tx_interrupt()?;
+        }
+
+        if (icr & (1 << 7)) != 0 {
+            // Receive timer interrupt
+            self.handle_rx_interrupt()?;
+        }
+
+        if (icr & (1 << 2)) != 0 {
+            // Link status change
+            self.handle_link_interrupt()?;
+        }
+
+        Ok(())
+    }
+
+    /// Handle transmit interrupt
+    fn handle_tx_interrupt(&mut self) -> Result<(), NetworkError> {
+        // Process completed transmit descriptors
+        // In real implementation, this would clean up transmitted buffers
+        Ok(())
+    }
+
+    /// Handle receive interrupt
+    fn handle_rx_interrupt(&mut self) -> Result<(), NetworkError> {
+        // Process received packets
+        while let Some(packet_data) = self.receive_packet_hardware()? {
+            // In real implementation, this would pass packet to network stack
+            // For now, just update statistics
+            self.stats.rx_packets += 1;
+            self.stats.rx_bytes += packet_data.len() as u64;
+        }
+        Ok(())
+    }
+
+    /// Handle link status change interrupt
+    fn handle_link_interrupt(&mut self) -> Result<(), NetworkError> {
+        let status = self.read_reg(E1000Reg::Status);
+        let link_up = (status & E1000Status::LU.bits()) != 0;
+
+        if link_up {
+            // Link is up, determine speed and duplex
+            let speed_bits = (status & E1000Status::SPEED.bits()) >> 6;
+            self.current_speed = match speed_bits {
+                0 => 10,
+                1 => 100,
+                2 => 1000,
+                _ => 0,
+            };
+
+            self.full_duplex = (status & E1000Status::FD.bits()) != 0;
+            self.stats.link_changes += 1;
+        } else {
+            self.current_speed = 0;
+            self.full_duplex = false;
+            self.stats.link_changes += 1;
+        }
+
+        Ok(())
+    }et tipg = match self.device_info.map(|info| info.generation) {
             Some(E1000Generation::E1000) => 0x602008, // 10/8/6 for copper
             _ => 0x602008, // Default values
         };
@@ -576,6 +1006,162 @@ impl IntelE1000Driver {
 }
 
 impl NetworkDriver for IntelE1000Driver {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn device_type(&self) -> DeviceType {
+        DeviceType::Ethernet
+    }
+
+    fn state(&self) -> DeviceState {
+        self.state
+    }
+
+    fn capabilities(&self) -> &DeviceCapabilities {
+        &self.capabilities
+    }
+
+    fn init(&mut self) -> Result<(), NetworkError> {
+        // Reset controller
+        self.reset_controller()?;
+
+        // Read MAC address
+        self.read_mac_address()?;
+
+        // Initialize receive subsystem
+        self.init_rx()?;
+
+        // Initialize transmit subsystem
+        self.init_tx()?;
+
+        self.state = DeviceState::Initialized;
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<(), NetworkError> {
+        if self.state != DeviceState::Initialized {
+            return Err(NetworkError::InvalidState);
+        }
+
+        // Enable interrupts
+        let ims = (1 << 0) | // Transmit descriptor written back
+                  (1 << 7) | // Receive timer
+                  (1 << 2);  // Link status change
+        self.write_reg(E1000Reg::Ims, ims);
+
+        self.state = DeviceState::Up;
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), NetworkError> {
+        // Disable interrupts
+        self.write_reg(E1000Reg::Imc, 0xFFFFFFFF);
+
+        // Disable receiver and transmitter
+        self.write_reg(E1000Reg::Rctl, 0);
+        self.write_reg(E1000Reg::Tctl, 0);
+
+        self.state = DeviceState::Down;
+        Ok(())
+    }
+
+    fn send_packet(&mut self, packet: &[u8]) -> Result<(), NetworkError> {
+        if self.state != DeviceState::Up {
+            return Err(NetworkError::NetworkUnreachable);
+        }
+
+        self.send_packet_hardware(packet)
+    }
+
+    fn receive_packet(&mut self) -> Result<Option<Vec<u8>>, NetworkError> {
+        if self.state != DeviceState::Up {
+            return Ok(None);
+        }
+
+        self.receive_packet_hardware()
+    }
+
+    fn get_mac_address(&self) -> MacAddress {
+        self.mac_address
+    }
+
+    fn set_mac_address(&mut self, mac: MacAddress) -> Result<(), NetworkError> {
+        self.mac_address = mac;
+
+        // Write MAC address to hardware registers
+        let mac_bytes = mac.as_bytes();
+        let ral = ((mac_bytes[3] as u32) << 24) |
+                  ((mac_bytes[2] as u32) << 16) |
+                  ((mac_bytes[1] as u32) << 8) |
+                  (mac_bytes[0] as u32);
+        let rah = ((mac_bytes[5] as u32) << 8) |
+                  (mac_bytes[4] as u32) |
+                  0x80000000; // Address valid bit
+
+        self.write_reg(E1000Reg::Ral, ral);
+        self.write_reg(E1000Reg::Rah, rah);
+
+        Ok(())
+    }
+
+    fn get_link_status(&self) -> (bool, u32, bool) {
+        let status = self.read_reg(E1000Reg::Status);
+        let link_up = (status & E1000Status::LU.bits()) != 0;
+        (link_up, self.current_speed, self.full_duplex)
+    }
+
+    fn get_statistics(&self) -> NetworkStats {
+        NetworkStats {
+            rx_packets: self.stats.rx_packets,
+            tx_packets: self.stats.tx_packets,
+            rx_bytes: self.stats.rx_bytes,
+            tx_bytes: self.stats.tx_bytes,
+            rx_errors: self.stats.rx_errors,
+            tx_errors: self.stats.tx_errors,
+            rx_dropped: self.stats.rx_dropped,
+            tx_dropped: self.stats.tx_dropped,
+        }
+    }
+
+    fn handle_interrupt(&mut self) -> Result<(), NetworkError> {
+        self.handle_interrupt()
+    }
+
+    fn set_power_state(&mut self, state: PowerState) -> Result<(), NetworkError> {
+        // Configure power management
+        match state {
+            PowerState::D0 => {
+                // Full power
+                self.power_state = state;
+            }
+            PowerState::D3Hot => {
+                // Low power with wake capabilities
+                if self.wol_config.enabled {
+                    // Configure Wake-on-LAN
+                    // In real implementation, set WOL registers
+                }
+                self.power_state = state;
+            }
+            _ => {
+                return Err(NetworkError::NotSupported);
+            }
+        }
+        Ok(())
+    }
+
+    fn configure_wol(&mut self, config: WakeOnLanConfig) -> Result<(), NetworkError> {
+        if !self.extended_capabilities.wake_on_lan {
+            return Err(NetworkError::NotSupported);
+        }
+
+        self.wol_config = config;
+        
+        // In real implementation, configure hardware WOL registers
+        // For now, just store the configuration
+        
+        Ok(())
+    }
     fn name(&self) -> &str {
         &self.name
     }
@@ -768,7 +1354,22 @@ pub fn create_intel_e1000_driver(
     device_id: u16,
     base_addr: u64,
     irq: u8,
-) -> Option<(Box<dyn NetworkDriver>, ExtendedNetworkCapabilities)> {
+) -> Option<(Box<dyn NetworkDriver + Send + Sync>, ExtendedNetworkCapabilities)> {
+    // Find matching device in database
+    let device_info = INTEL_E1000_DEVICES.iter()
+        .find(|info| info.vendor_id == vendor_id && info.device_id == device_id)?;
+
+    // Create driver instance
+    let driver = IntelE1000Driver::new(
+        device_info.name.to_string(),
+        *device_info,
+        base_addr,
+        irq,
+    );
+
+    let capabilities = driver.extended_capabilities.clone();
+    
+    Some((Box::new(driver), capabilities))
     // Find matching device in database
     let device_info = INTEL_E1000_DEVICES.iter()
         .find(|info| info.vendor_id == vendor_id && info.device_id == device_id)
