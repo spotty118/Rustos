@@ -66,23 +66,29 @@ RustOS is working toward **binary compatibility** with Linux through several app
 ❌ **Cannot run Linux kernel modules** - These are kernel-space code specific to Linux  
 ❌ **No Linux-specific APIs** - SystemD, D-Bus, netlink sockets require additional work  
 ❌ **Limited driver compatibility** - Hardware drivers must be written for RustOS  
-❌ **No Linux distribution packages** - Cannot install .deb or .rpm packages directly (see package manager integration below)  
+❌ **No Linux distribution packages** - Cannot install .deb or .rpm packages directly  
 
-### What about the Package Manager Integration?
+### Can RustOS install .deb or .rpm packages?
 
-The package manager integration documented in `docs/package_manager_integration.md` is **misleading in its current form**. Here's the reality:
+**Short answer**: Not currently, but see [LINUX_APP_SUPPORT.md](LINUX_APP_SUPPORT.md) for what would be needed.
 
-- **Current State**: The document describes an aspirational system for interfacing with Linux package managers
-- **Technical Reality**: RustOS cannot directly use Linux package managers (apt, dnf, etc.) because:
-  - These tools expect the Linux kernel and its specific system calls
-  - Binary packages are compiled for the Linux kernel's ABI
-  - Dependencies assume Linux-specific libraries and frameworks
+**Current Reality**: RustOS cannot directly use Linux package managers (apt, dnf, etc.) because:
+- These tools expect the Linux kernel and its specific system calls
+- Binary packages are compiled for the Linux kernel's ABI
+- Dependencies assume Linux-specific libraries and frameworks
+- Missing: dynamic linker, C library, extended syscalls, filesystems
 
-- **Realistic Approach**: For true package compatibility, RustOS would need:
-  1. Complete Linux syscall compatibility layer
-  2. Linux-compatible C library (glibc/musl equivalent)
-  3. Binary compatibility at the ABI level
-  4. Its own package management system or adaptation layer
+**What Would Be Required**: For true package compatibility, RustOS would need (see [detailed technical guide](LINUX_APP_SUPPORT.md)):
+1. Dynamic linker implementation (3-4 months)
+2. Linux-compatible C library - glibc/musl port (3-4 months)
+3. Complete POSIX syscall coverage (4-6 months)
+4. Filesystem support (ext4, FAT32) (2-3 months each)
+5. Package manager implementation (2-3 months)
+6. Userspace tools (bash, coreutils) (4-6 months)
+
+**Estimated Total Effort**: 15-20 months of focused development
+
+**See Also**: [LINUX_APP_SUPPORT.md](LINUX_APP_SUPPORT.md) for comprehensive technical requirements and roadmap.
 
 ### How does RustOS achieve Linux software compatibility?
 

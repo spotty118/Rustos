@@ -195,6 +195,7 @@ Both systems implement the same **standard interfaces**, allowing portable softw
 ❌ **Distribution packages**
 - .deb, .rpm, etc. cannot be installed directly
 - Require Linux kernel and ecosystem
+- **See [LINUX_APP_SUPPORT.md](LINUX_APP_SUPPORT.md) for detailed requirements**
 
 ### Compatibility Testing
 
@@ -381,6 +382,12 @@ int main(int argc, char **argv) {
 ### Can I install Ubuntu packages on RustOS?
 
 No. Ubuntu packages (.deb files) are designed for the Linux kernel and include Linux-specific dependencies. RustOS would need a complete compatibility layer and package adaptation system.
+
+**For a detailed technical guide on what would be required**, see [LINUX_APP_SUPPORT.md](LINUX_APP_SUPPORT.md), which covers:
+- Exact components needed (dynamic linker, libc, syscalls, filesystems)
+- Step-by-step implementation roadmap
+- Realistic effort estimates (15-20 months)
+- Alternative approaches
 
 ### Will Wine/Proton work on RustOS?
 

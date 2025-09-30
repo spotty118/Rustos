@@ -489,6 +489,9 @@ The kernel provides comprehensive debugging capabilities:
 ## Documentation
 
 - **[FAQ](docs/FAQ.md)**: Frequently asked questions, including Linux compatibility
+- **[Linux App Support](docs/LINUX_APP_SUPPORT.md)**: 🆕 **Technical guide for running .deb packages and Linux applications**
+- **[Linux Compatibility](docs/LINUX_COMPATIBILITY.md)**: Current compatibility status with Linux
+- **[Package Manager Integration](docs/package_manager_integration.md)**: Future package management vision
 - **[Quick Start Guide](QUICKSTART.md)**: Fast setup and basic operations
 - **[Development Roadmap](ROADMAP.md)**: Current status and future plans  
 - **[Kernel Improvements](KERNEL_IMPROVEMENTS.md)**: Detailed technical documentation
