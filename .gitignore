@@ -5,3 +5,13 @@ Cargo.lock
 *.img
 /tmp/
 backup/
+# System and temporary files
+.DS_Store
+*.log
+*.backup
+*~
+*.tmp
+
+# Backup files
+backup_*.tar.gz
+*_backup.*
