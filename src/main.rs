@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use core::panic::PanicInfo;
 use bootloader::{BootInfo, entry_point};
 
@@ -13,6 +15,10 @@ mod vga_buffer;
 mod print;
 // Include basic memory management
 mod memory_basic;
+// Include full memory management
+mod memory;
+// Include filesystem
+mod fs;
 // Include visual boot display
 mod boot_display;
 // Include keyboard input handler
@@ -21,6 +27,10 @@ mod keyboard;
 mod simple_desktop;
 // Include graphics system
 mod graphics;
+// Include GPU support
+mod gpu;
+// Include data structures
+mod data_structures;
 // Include advanced desktop environment
 mod desktop;
 // Include serial port driver
@@ -35,6 +45,22 @@ mod interrupts;
 mod acpi;
 // Include APIC support
 mod apic;
+// Include architecture-specific code
+mod arch;
+// Include SMP (multiprocessor) support
+mod smp;
+// Include PCI bus support
+mod pci;
+// Include drivers
+mod drivers;
+// Include network stack
+mod net;
+// Include security
+mod security;
+// Include IPC
+mod ipc;
+// Include kernel core
+mod kernel;
 // Include process management
 mod process;
 // Include process manager (high-level process APIs)
@@ -49,10 +75,15 @@ mod health;
 mod logging;
 // Include comprehensive testing framework
 mod testing;
+// Include performance monitoring
+mod performance;
+mod performance_monitor;
 // Include experimental package management system
 mod package;
 // Include Linux API compatibility layer
 mod linux_compat;
+// Include Linux integration layer
+mod linux_integration;
 // Include memory manager for virtual memory management
 mod memory_manager;
 // Include VFS and initramfs for Linux userspace
@@ -60,6 +91,8 @@ mod vfs;
 mod initramfs;
 // Include ELF loader for binary execution
 mod elf_loader;
+// Include syscall system
+mod syscall;
 // Include syscall handler for INT 0x80
 mod syscall_handler;
 // Include fast syscall support (SYSCALL/SYSRET)
@@ -322,6 +355,34 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         Ok(_) => println!("✅ Alpine Linux 3.19 loaded (3.1 MB)"),
         Err(_) => println!("⚠️  Initramfs initialization incomplete"),
     }
+    boot_display::boot_delay();
+
+    // Initialize Linux integration layer
+    println!("\n🔗 Initializing Deep Linux Integration...");
+    println!("   Wiring Linux APIs to native RustOS kernel subsystems...");
+    match linux_integration::init() {
+        Ok(_) => {
+            println!("✅ Linux Integration initialized successfully!");
+            println!("   • File operations -> VFS");
+            println!("   • Process operations -> Process Manager");
+            println!("   • Socket operations -> Network Stack");
+            println!("   • Memory operations -> Memory Manager");
+            println!("   • Time operations -> Time Subsystem");
+            
+            // Update kernel subsystem state
+            if let Err(e) = crate::kernel::update_subsystem_state("linux_compat", crate::kernel::SubsystemState::Ready) {
+                println!("⚠️  Failed to update linux_compat state: {}", e);
+            }
+            if let Err(e) = crate::kernel::update_subsystem_state("linux_integration", crate::kernel::SubsystemState::Ready) {
+                println!("⚠️  Failed to update linux_integration state: {}", e);
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Linux Integration initialization failed: {}", e);
+            println!("   Continuing with native kernel only");
+        }
+    }
+    println!("   RustOS kernel remains the main driver");
     boot_display::boot_delay();
 
     println!("\n🚀 RustOS Desktop Selection");

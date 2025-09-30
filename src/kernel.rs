@@ -63,6 +63,8 @@ pub fn init() -> Result<(), &'static str> {
     register_subsystem("drivers", 10, &["interrupts", "memory"]);
     register_subsystem("filesystem", 11, &["drivers"]);
     register_subsystem("network", 12, &["drivers"]);
+    register_subsystem("linux_compat", 13, &["filesystem", "network", "process"]);
+    register_subsystem("linux_integration", 14, &["linux_compat", "filesystem", "network", "process"]);
     
     KERNEL_INITIALIZED.store(true, Ordering::Release);
     Ok(())

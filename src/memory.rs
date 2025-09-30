@@ -1333,7 +1333,6 @@ impl PageTableManager {
             }
         }
     }
-    }
 
     /// Handle page fault with proper error recovery
     pub fn handle_page_fault(&mut self, addr: VirtAddr, error_code: u64, frame_allocator: &mut impl FrameAllocator<Size4KiB>) -> Result<(), &'static str> {
