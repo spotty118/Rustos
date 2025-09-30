@@ -19,11 +19,161 @@ This document provides a comprehensive index of all RustOS kernel modules, their
 - → `memory` (heap initialization)
 - → `gdt` (descriptor table setup)
 - → `interrupts` (IDT configuration)
+- → `time` (hardware timer initialization)
+- → `arch` (CPU detection)
+- → `security` (privilege level setup)
+- → `smp` (multiprocessor initialization)
+- → `ipc` (IPC mechanism setup)
+- → `vga_buffer` (early console)
+- → `performance_monitor` (perf counters)
+- → `kernel` (subsystem coordination)
 - → `process` (scheduler start)
 - → `drivers` (device initialization)
 
 **Used By**:
 - ← `src/boot.s` (assembly boot code)
+
+---
+
+### `src/time.rs` - Hardware Timer (🆕 Production)
+**Purpose**: Real x86_64 timer using PIT and TSC
+**Key Features**:
+- Programmable Interval Timer (PIT) configuration
+- Time Stamp Counter (TSC) for high-resolution timing
+- Real hardware interrupt-based timekeeping
+
+**Dependencies**:
+- → `x86_64` crate (port I/O)
+- → `interrupts` (timer IRQ)
+
+**Used By**:
+- ← `main.rs` (timer initialization)
+- ← `scheduler` (time slicing)
+- ← `process` (sleep, timeouts)
+
+---
+
+### `src/arch.rs` - CPU Architecture Detection (🆕 Production)
+**Purpose**: Real CPU detection using CPUID instructions
+**Key Features**:
+- CPUID-based CPU identification
+- Feature flag detection (SSE, AVX, etc.)
+- Vendor identification (Intel, AMD)
+- CPU topology information
+
+**Dependencies**:
+- → `x86_64` crate (CPUID instruction)
+
+**Used By**:
+- ← `main.rs` (CPU detection)
+- ← `smp` (multiprocessor features)
+- ← `process` (context switching optimizations)
+
+---
+
+### `src/smp.rs` - Multiprocessor Support (🆕 Production)
+**Purpose**: Real SMP with APIC-based inter-processor communication
+**Key Features**:
+- Application processor boot-up
+- Inter-processor interrupts (IPI)
+- Per-CPU data structures
+- CPU affinity management
+
+**Dependencies**:
+- → `acpi` (CPU enumeration)
+- → `apic` (IPI delivery)
+- → `arch` (CPU features)
+
+**Used By**:
+- ← `main.rs` (SMP initialization)
+- ← `scheduler` (load balancing)
+- ← `process` (CPU affinity)
+
+---
+
+### `src/security.rs` - Access Control (🆕 Production)
+**Purpose**: Hardware privilege levels (Ring 0-3) with access control
+**Key Features**:
+- x86_64 privilege ring management
+- Access control enforcement
+- Kernel/user mode transitions
+- Security policy management
+
+**Dependencies**:
+- → `gdt` (segment descriptors)
+
+**Used By**:
+- ← `main.rs` (security initialization)
+- ← `process` (privilege enforcement)
+- ← `syscall` (ring transitions)
+
+---
+
+### `src/kernel.rs` - Kernel Subsystem Coordinator (🆕 Production)
+**Purpose**: Real subsystem initialization coordinator
+**Key Features**:
+- Coordinated subsystem startup
+- Dependency management
+- Initialization ordering
+- Subsystem health monitoring
+
+**Used By**:
+- ← `main.rs` (subsystem coordination)
+- ← All subsystems (initialization)
+
+---
+
+### `src/ipc.rs` - Inter-Process Communication (🆕 Production)
+**Purpose**: Production IPC mechanisms
+**Key Features**:
+- **Pipes**: Anonymous and named pipes with kernel buffers
+- **Message Queues**: Asynchronous message passing
+- **Semaphores**: Process synchronization primitives
+- **Shared Memory**: Fast inter-process data sharing
+
+**Dependencies**:
+- → `memory` (buffer allocation)
+- → `process` (process coordination)
+
+**Used By**:
+- ← `syscall` (IPC system calls)
+- ← `process` (process communication)
+
+---
+
+### `src/vga_buffer.rs` - VGA Text Mode (🆕 Production)
+**Purpose**: Real hardware VGA buffer access at 0xB8000
+**Key Features**:
+- Direct VGA memory manipulation
+- Hardware text mode (80x25)
+- Color attribute support
+- Early boot console output
+
+**Dependencies**:
+- → Raw memory access (0xB8000)
+
+**Used By**:
+- ← `main.rs` (early console)
+- ← All modules (println! macro)
+
+---
+
+### `src/performance_monitor.rs` - Performance Counters (🆕 Production)
+**Purpose**: Hardware performance counters using RDPMC instruction
+**Key Features**:
+- RDPMC-based performance monitoring
+- CPU cycle counting
+- Cache hit/miss tracking
+- Branch prediction statistics
+- Low-overhead profiling
+
+**Dependencies**:
+- → `x86_64` crate (RDPMC instruction)
+
+**Used By**:
+- ← `main.rs` (performance monitoring)
+- ← `scheduler` (load metrics)
+- ← `ai` (performance optimization)
 
 ---
 
@@ -563,8 +713,8 @@ main.rs
 
 ## Module Statistics
 
-- **Total Modules**: 67
-- **Core Kernel**: 12 modules
+- **Total Modules**: 75 (8 new production modules added)
+- **Core Kernel**: 20 modules (includes 8 new production modules)
 - **Drivers**: 15 modules
 - **Network Stack**: 9 modules
 - **Process Management**: 7 modules
@@ -572,6 +722,16 @@ main.rs
 - **File System**: 4 modules
 - **Hardware Abstraction**: 6 modules
 - **Utilities**: 6 modules
+
+### 🆕 New Production Modules
+- `src/time.rs` - Real hardware timers (PIT, TSC)
+- `src/arch.rs` - Real CPU detection (CPUID)
+- `src/smp.rs` - Real multiprocessor support (APIC IPI)
+- `src/security.rs` - Access control (Ring 0-3)
+- `src/kernel.rs` - Subsystem coordinator
+- `src/ipc.rs` - Production IPC mechanisms
+- `src/vga_buffer.rs` - Real VGA hardware (0xB8000)
+- `src/performance_monitor.rs` - Hardware perf counters (RDPMC)
 
 ---
 

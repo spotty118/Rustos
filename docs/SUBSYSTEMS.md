@@ -2,14 +2,16 @@
 
 ## Table of Contents
 1. [Hardware Abstraction Layer](#hardware-abstraction-layer)
-2. [Process Management Subsystem](#process-management-subsystem)
-3. [Memory Management Subsystem](#memory-management-subsystem)
-4. [Network Stack Subsystem](#network-stack-subsystem)
-5. [GPU Acceleration Subsystem](#gpu-acceleration-subsystem)
-6. [File System Subsystem](#file-system-subsystem)
-7. [Driver Framework](#driver-framework)
-8. [AI Integration Subsystem](#ai-integration-subsystem)
-9. [Security Subsystem](#security-subsystem)
+2. [🆕 Production Hardware Modules](#production-hardware-modules)
+3. [Process Management Subsystem](#process-management-subsystem)
+4. [Memory Management Subsystem](#memory-management-subsystem)
+5. [Network Stack Subsystem](#network-stack-subsystem)
+6. [GPU Acceleration Subsystem](#gpu-acceleration-subsystem)
+7. [File System Subsystem](#file-system-subsystem)
+8. [Driver Framework](#driver-framework)
+9. [AI Integration Subsystem](#ai-integration-subsystem)
+10. [Security Subsystem](#security-subsystem)
+11. [🆕 IPC Subsystem](#ipc-subsystem)
 
 ---
 
@@ -206,6 +208,36 @@ impl HotplugManager {
     }
 }
 ```
+
+---
+
+## 🆕 Production Hardware Modules
+
+All mock/simulation modules have been replaced with production implementations that interact directly with x86_64 hardware.
+
+### Time Subsystem (`src/time.rs`)
+Real hardware timer using PIT and TSC for accurate timekeeping.
+
+### Architecture Detection (`src/arch.rs`)
+Real CPU feature detection using CPUID instruction - detects SSE, AVX, vendor info, etc.
+
+### SMP Subsystem (`src/smp.rs`)
+Production multiprocessor support with real APIC-based inter-processor interrupts.
+
+### Security Subsystem (`src/security.rs`)
+Hardware privilege level management (Ring 0-3) with access control enforcement.
+
+### Kernel Coordinator (`src/kernel.rs`)
+Coordinates initialization of all kernel subsystems with dependency management.
+
+### IPC Subsystem (`src/ipc.rs`)
+Production IPC: pipes, message queues, semaphores, and shared memory with real kernel buffers.
+
+### VGA Buffer (`src/vga_buffer.rs`)
+Direct hardware VGA text mode access at physical address 0xB8000.
+
+### Performance Monitor (`src/performance_monitor.rs`)
+Hardware performance counters using RDPMC instruction for low-overhead profiling.
 
 ---
 

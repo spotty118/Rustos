@@ -69,20 +69,28 @@ RustOS is a production-ready operating system kernel written in Rust, designed w
 - Jumps to Rust kernel entry
 
 ### 2. Kernel Initialization (`src/main.rs:kernel_entry`)
-1. **VGA Buffer Setup**: Initialize early console output
+1. **VGA Buffer Setup**: Initialize early console output (src/vga_buffer.rs - Real hardware)
 2. **GDT Setup**: Configure Global Descriptor Table
 3. **IDT Setup**: Initialize Interrupt Descriptor Table
 4. **Memory Init**: Set up kernel heap and allocator
-5. **APIC Init**: Configure Local APIC and IO-APIC
-6. **PCI Scan**: Enumerate PCI/PCIe devices
-7. **Driver Load**: Initialize device drivers
-8. **Scheduler Start**: Begin process scheduling
+5. **Timer Init**: Configure PIT and TSC hardware timers (src/time.rs)
+6. **CPU Detection**: Detect CPU features via CPUID (src/arch.rs)
+7. **Security Init**: Set up privilege levels and access control (src/security.rs)
+8. **APIC Init**: Configure Local APIC and IO-APIC
+9. **SMP Init**: Boot application processors (src/smp.rs)
+10. **PCI Scan**: Enumerate PCI/PCIe devices
+11. **IPC Init**: Initialize IPC mechanisms (src/ipc.rs)
+12. **Driver Load**: Initialize device drivers
+13. **Scheduler Start**: Begin process scheduling
+14. **Perf Monitor**: Start performance counters (src/performance_monitor.rs)
 
 ### 3. Service Initialization
+- Kernel subsystem coordination (src/kernel.rs)
 - Network stack initialization
 - File system mounting
 - Desktop environment setup (if graphics available)
 - AI subsystem activation
+- Real-time performance monitoring
 
 ## Memory Management
 
@@ -207,9 +215,11 @@ GPU Hardware
 
 ## Security Architecture
 
-### Protection Rings
-- **Ring 0**: Kernel mode (full privileges)
-- **Ring 3**: User mode (restricted) - planned
+### Protection Rings (`src/security.rs`) - Production Implementation
+- **Ring 0**: Kernel mode (full privileges) - Active
+- **Ring 1-2**: Reserved for system services
+- **Ring 3**: User mode (restricted) - Implemented
+- **Access Control**: Hardware-enforced privilege level checks
 
 ### Security Features
 - ASLR (Address Space Layout Randomization) - planned
@@ -251,20 +261,23 @@ Hardware Abstraction (PCI, USB, etc.)
 
 ## Inter-Process Communication
 
-### IPC Mechanisms (`src/process/ipc.rs`)
-- **Shared Memory**: Fast data sharing between processes
-- **Message Queues**: Asynchronous message passing
-- **Pipes**: Unidirectional data flow
-- **Signals**: Asynchronous notifications
+### IPC Mechanisms (`src/ipc.rs`) - Production Implementation
+- **Pipes**: Anonymous and named pipes with real kernel buffers
+- **Message Queues**: Asynchronous message passing with proper synchronization
+- **Semaphores**: Process synchronization primitives with hardware support
+- **Shared Memory**: Fast data sharing between processes with memory protection
+- **Signals**: Asynchronous notifications (via process/mod.rs)
 
 ## Performance Monitoring
 
-### Metrics Collection (`src/performance_monitor.rs`)
-- CPU utilization per core
-- Memory usage and fragmentation
-- Network throughput and latency
-- Disk I/O statistics
-- GPU utilization
+### Metrics Collection (`src/performance_monitor.rs`) - Hardware Counters
+- **Real Hardware Performance Counters**: Using RDPMC instruction
+- CPU utilization per core with cycle-accurate measurements
+- Memory usage and fragmentation tracking
+- Network throughput and latency monitoring
+- Disk I/O statistics collection
+- GPU utilization tracking
+- Low-overhead performance profiling
 
 ### Observability
 - Real-time performance dashboards
