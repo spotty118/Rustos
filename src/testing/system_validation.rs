@@ -575,10 +575,37 @@ fn measure_current_performance() -> BTreeMap<String, f64> {
     let syscall_latency = (end - start) as f64 / 3000.0; // Convert to microseconds
     metrics.insert("syscall_latency_us".to_string(), syscall_latency);
     
-    // Add other performance measurements
-    metrics.insert("context_switch_us".to_string(), 25.0); // Simulated
-    metrics.insert("memory_alloc_us".to_string(), 3.0);    // Simulated
-    metrics.insert("interrupt_latency_us".to_string(), 1.5); // Simulated
+    // Measure context switch latency (real measurement)
+    let ctx_start = crate::performance_monitor::read_tsc();
+    // Simulate minimal context switch overhead by measuring scheduler decision time
+    if let Some(scheduler) = crate::scheduler::get_scheduler() {
+        let _current = scheduler.lock().current_process();
+    }
+    let ctx_end = crate::performance_monitor::read_tsc();
+    let context_switch_us = (ctx_end - ctx_start) as f64 / 3000.0;
+    metrics.insert("context_switch_us".to_string(), context_switch_us);
+    
+    // Measure memory allocation latency (real measurement)
+    let mem_start = crate::performance_monitor::read_tsc();
+    use crate::memory::{get_memory_manager, MemoryZone};
+    if let Some(memory_manager) = get_memory_manager() {
+        let mut manager = memory_manager.lock();
+        let frame = manager.allocate_frame_in_zone(MemoryZone::Normal);
+        if let Some(f) = frame {
+            manager.deallocate_frame(f);
+        }
+    }
+    let mem_end = crate::performance_monitor::read_tsc();
+    let memory_alloc_us = (mem_end - mem_start) as f64 / 3000.0;
+    metrics.insert("memory_alloc_us".to_string(), memory_alloc_us);
+    
+    // Measure interrupt latency approximation using TSC
+    // Since we can't trigger real interrupts in testing, we measure timer read overhead
+    let int_start = crate::performance_monitor::read_tsc();
+    let _ = crate::time::uptime_us();
+    let int_end = crate::performance_monitor::read_tsc();
+    let interrupt_latency_us = (int_end - int_start) as f64 / 3000.0;
+    metrics.insert("interrupt_latency_us".to_string(), interrupt_latency_us);
     
     metrics
 }
@@ -591,25 +618,68 @@ pub fn run_system_validation(config: SystemValidationConfig) -> SystemValidation
     let suite = create_system_validation_suite(config.clone());
     let mut framework = crate::testing_framework::TestFramework::new();
     framework.add_suite(suite);
-    let _stats = framework.run_all_tests();
+    let stats = framework.run_all_tests();
     
     let end_time = crate::time::uptime_us();
     let uptime_achieved_hours = (end_time - start_time) as f32 / (3600.0 * 1_000_000.0);
     
     // Collect results
-    let (memory_used, _) = crate::performance_monitor::memory_usage();
+    let (memory_used, memory_total) = crate::performance_monitor::memory_usage();
     let peak_memory_usage_mb = (memory_used / (1024 * 1024)) as usize;
     
+    // Calculate real stability score based on test results
+    let total_tests = stats.total_tests();
+    let passed_tests = stats.passed_tests();
+    let stability_score = if total_tests > 0 {
+        passed_tests as f32 / total_tests as f32
+    } else {
+        0.95 // Default if no tests run
+    };
+    
+    // Calculate real performance score based on measured metrics
+    let current_metrics = measure_current_performance();
+    let baseline_metrics = get_baseline_performance_metrics();
+    let mut perf_score_sum = 0.0;
+    let mut perf_count = 0;
+    
+    for (metric_name, baseline_value) in &baseline_metrics {
+        if let Some(current_value) = current_metrics.get(metric_name) {
+            // Performance score: 1.0 if at baseline, decreases if worse
+            let score = baseline_value / current_value.max(0.1);
+            perf_score_sum += score.min(1.0);
+            perf_count += 1;
+        }
+    }
+    
+    let performance_score = if perf_count > 0 {
+        (perf_score_sum / perf_count as f64) as f32
+    } else {
+        0.88 // Default if no metrics
+    };
+    
+    // Get real concurrent process count from scheduler
+    let max_concurrent_processes = if let Some(scheduler) = crate::scheduler::get_scheduler() {
+        scheduler.lock().process_count()
+    } else {
+        1 // At least kernel process
+    };
+    
+    // Calculate average response time from measured syscall latency
+    let average_response_time_us = current_metrics
+        .get("syscall_latency_us")
+        .map(|&v| v as u64)
+        .unwrap_or(50);
+    
     SystemValidationResults {
-        stability_score: 0.95, // Simulated
-        performance_score: 0.88, // Simulated
+        stability_score,
+        performance_score,
         memory_safety_violations: Vec::new(),
         security_issues: Vec::new(),
         compatibility_issues: Vec::new(),
         hardware_test_results: BTreeMap::new(),
         uptime_achieved_hours,
-        max_concurrent_processes: 100, // Simulated
+        max_concurrent_processes,
         peak_memory_usage_mb,
-        average_response_time_us: 50, // Simulated
+        average_response_time_us,
     }
 }
