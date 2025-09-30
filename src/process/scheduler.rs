@@ -458,3 +458,132 @@ pub struct ProcessSchedulingStats {
     pub blocked: bool,
     pub cpu_affinity: u64,
 }
+
+/// Global scheduler functions for external access
+
+/// Create a new process and add it to the scheduler
+pub fn create_process(parent_pid: Option<Pid>, priority: Priority, name: &str) -> Result<Pid, &'static str> {
+    let process_manager = super::get_process_manager();
+    process_manager.create_process(name, parent_pid, priority)
+}
+
+/// Schedule the next process to run (called by timer interrupt)
+pub fn schedule() -> Result<Option<Pid>, &'static str> {
+    let process_manager = super::get_process_manager();
+    process_manager.schedule()
+}
+
+/// Get scheduler statistics 
+pub fn get_scheduler_stats() -> SchedulingStats {
+    let process_manager = super::get_process_manager();
+    let scheduler = process_manager.scheduler.lock();
+    scheduler.get_stats().clone()
+}
+
+/// Timer tick notification to scheduler
+pub fn timer_tick(delta_ms: u64) {
+    let process_manager = super::get_process_manager();
+    let mut scheduler = process_manager.scheduler.lock();
+    scheduler.tick(delta_ms);
+}
+
+/// Yield the CPU to the next process (cooperative multitasking)
+/// This is the missing function that was referenced in interrupts.rs
+pub fn yield_cpu() {
+    // Get the process manager and trigger a scheduling decision
+    let process_manager = super::get_process_manager();
+    
+    // Schedule the next process
+    if let Ok(Some(next_pid)) = process_manager.schedule() {
+        // In a full implementation, this would trigger a context switch
+        // For now, we update the current process tracking
+        process_manager.set_current_process(next_pid);
+        
+        // Note: Actual context switching would require:
+        // 1. Saving current process state (registers, stack, etc.)
+        // 2. Loading next process state
+        // 3. Switching page tables (CR3 register)
+        // 4. Updating kernel stacks
+        // 5. Jumping to next process execution point
+        
+        // This simplified version just updates tracking
+        crate::serial_println!("Yielded CPU to process {}", next_pid);
+    } else {
+        // No other process to run, continue with current
+        crate::serial_println!("No other process to schedule, continuing current");
+    }
+}
+
+/// Block the current process and yield to scheduler
+pub fn block_current_process() -> Result<(), &'static str> {
+    let process_manager = super::get_process_manager();
+    let current_pid = process_manager.current_process();
+    
+    // Block the current process
+    process_manager.block_process(current_pid)?;
+    
+    // Yield to the next process
+    yield_cpu();
+    
+    Ok(())
+}
+
+/// Wake up a blocked process
+pub fn wake_process(pid: Pid) -> Result<(), &'static str> {
+    let process_manager = super::get_process_manager();
+    process_manager.unblock_process(pid)
+}
+
+/// Terminate a process and yield to scheduler
+pub fn terminate_process(pid: Pid, exit_status: i32) -> Result<(), &'static str> {
+    let process_manager = super::get_process_manager();
+    
+    // Terminate the process
+    process_manager.terminate_process(pid, exit_status)?;
+    
+    // If we terminated the current process, yield to scheduler
+    if pid == process_manager.current_process() {
+        yield_cpu();
+    }
+    
+    Ok(())
+}
+
+/// Set process priority
+pub fn set_process_priority(pid: Pid, priority: Priority) -> Result<(), &'static str> {
+    let process_manager = super::get_process_manager();
+    let mut scheduler = process_manager.scheduler.lock();
+    
+    // Update priority in scheduler
+    scheduler.update_process_priority(pid, priority)
+}
+
+/// Get process priority
+pub fn get_process_priority(pid: Pid) -> Option<Priority> {
+    let process_manager = super::get_process_manager();
+    if let Some(process) = process_manager.get_process(pid) {
+        Some(process.priority)
+    } else {
+        None
+    }
+}
+
+/// Get current process from scheduler perspective
+pub fn get_current_process() -> Pid {
+    let process_manager = super::get_process_manager();
+    process_manager.current_process()
+}
+
+/// Update scheduling algorithm
+pub fn set_scheduling_algorithm(algorithm: SchedulingAlgorithm) {
+    let process_manager = super::get_process_manager();
+    let mut scheduler = process_manager.scheduler.lock();
+    scheduler.set_algorithm(algorithm);
+}
+
+/// Get ready queue length for load balancing
+pub fn get_ready_queue_length() -> usize {
+    let process_manager = super::get_process_manager();
+    let scheduler = process_manager.scheduler.lock();
+    scheduler.ready_queue_length()
+}

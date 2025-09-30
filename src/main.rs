@@ -37,6 +37,8 @@ mod acpi;
 mod apic;
 // Include process management
 mod process;
+// Include scheduler
+mod scheduler;
 // Include error handling and recovery system
 mod error;
 // Include system health monitoring
