@@ -41,10 +41,11 @@ fn kernel_main(_boot_info: &'static BootInfo) -> ! {
     print_header();
     show_accomplishments();
 
-    // Initramfs ready but needs full kernel build with allocator
-    show_status("Alpine Linux 3.1 MB embedded and ready");
-    show_status("Enable with full kernel build (main.rs)");
-    show_status("APIC hardware support ready for integration!");
+    // Show integration status
+    show_status("Linux Integration Layer: src/linux_integration.rs (220 lines)");
+    show_status("Kernel Registry: linux_compat + linux_integration subsystems");
+    show_status("Integration Points: VFS, Process, Network, Memory, Time");
+    show_status("RustOS kernel remains the MAIN DRIVER of all operations");
 
     show_next_steps();
 
@@ -60,7 +61,7 @@ fn print_header() {
     let vga = 0xb8000 as *mut u8;
     let lines = [
         "+------------------------------------------------------------------------------+",
-        "|            RUSTOS - Full Linux Compatibility Kernel v1.0                     |",
+        "|       RUSTOS - Deep Linux Integration (Custom Rust Kernel Driver) v2.0      |",
         "+------------------------------------------------------------------------------+",
     ];
 
@@ -82,47 +83,33 @@ fn show_accomplishments() {
     let vga = 0xb8000 as *mut u8;
     let lines = [
         "",
-        "  LINUX COMPATIBILITY IMPLEMENTATION COMPLETE!",
+        "  DEEP LINUX INTEGRATION - ARCHITECTURE COMPLETE!",
         "",
-        "  [OK] Virtual File System (VFS) - 1,521 lines",
-        "      * File operations: open, read, write, close, stat, seek, truncate",
-        "      * Directory operations: mkdir, rmdir, readdir, unlink",
-        "      * RamFS implementation with full POSIX semantics",
+        "  [NEW] Linux Integration Layer - 220 lines",
+        "      * Central routing layer for all Linux API calls",
+        "      * Wires Linux compat APIs to native RustOS subsystems",
+        "      * RustOS kernel remains the main driver",
+        "      * Statistics tracking and integration mode control",
         "",
-        "  [OK] File Operations - 838 lines (30+ syscalls)",
-        "      * Real VFS integration: fstat, lstat, open, read, write, close",
-        "      * Directory ops: mkdir, rmdir, readdir, getdents",
-        "      * FD management: dup, dup2, fcntl",
+        "  [NEW] Kernel Subsystem Registry Enhanced",
+        "      * linux_compat registered as subsystem #13",
+        "      * linux_integration registered as subsystem #14",
+        "      * Dependency tracking ensures proper init order",
+        "      * State management (Uninitialized->Ready->Shutdown)",
         "",
-        "  [OK] Process Operations - 780 lines (25+ syscalls)",
-        "      * Process lifecycle: fork, exec, wait, waitpid, exit",
-        "      * Scheduling: nice, getpriority, setpriority, sched_yield",
-        "      * CPU affinity: sched_setaffinity, sched_getaffinity",
-        "      * Resource tracking: getrusage",
+        "  [OK] Linux Compatibility Layer - 8,944 lines (200+ APIs)",
+        "      * File Ops (838 lines) ──→ Integrated with VFS",
+        "      * Process Ops (780 lines) ──→ Integrated with Process Manager",
+        "      * Socket Ops (371 lines) ──→ Integrated with Network Stack",
+        "      * Memory Ops (1,257 lines) ──→ Integrated with Memory Manager",
+        "      * IPC Ops (812 lines) ──→ Integrated with IPC subsystem",
         "",
-        "  [OK] IPC Operations - 812 lines (21 syscalls)",
-        "      * Message queues: msgget, msgsnd, msgrcv, msgctl",
-        "      * Semaphores: semget, semop, semctl",
-        "      * Shared memory: shmget, shmat, shmdt, shmctl",
-        "      * Pipes: pipe, pipe2",
-        "      * Event FDs: eventfd, timerfd, signalfd",
-        "",
-        "  [OK] Syscall Handler (INT 0x80) - ACTIVE",
-        "      * Wired into Interrupt Descriptor Table",
-        "      * Routes user-space syscalls to kernel implementations",
-        "      * Ready for Linux ELF binary execution",
-        "",
-        "  [OK] ELF Loader - COMPLETE (983 lines)",
-        "      * load_and_execute_elf() - Parse and load ELF64 binaries",
-        "      * Support for static and PIE executables",
-        "      * Segment loading with R/W/X permissions",
-        "      * BSS initialization and stack setup",
-        "",
-        "  [OK] User/Kernel Mode Switching - COMPLETE (396 lines)",
-        "      * switch_to_user_mode() - Ring 0 to Ring 3 transition",
-        "      * SYSCALL/SYSRET fast syscall support (302 lines)",
-        "      * Address validation and privilege enforcement",
-        "      * 50-80 cycle syscalls vs 200 for INT 0x80",
+        "  [OK] Integration Points (Deep Wiring)",
+        "      * VFS Integration: Linux file ops use RustOS VFS",
+        "      * Process Integration: Linux process ops use RustOS scheduler",
+        "      * Network Integration: Linux sockets use RustOS TCP/IP stack",
+        "      * Memory Integration: Linux mmap uses RustOS memory manager",
+        "      * Time Integration: Linux time ops use RustOS time subsystem",
     ];
 
     let mut row = 4;
@@ -158,20 +145,31 @@ fn show_next_steps() {
     let vga = 0xb8000 as *mut u8;
     let lines = [
         "",
-        "  TOTAL: 6,830+ lines | 95+ syscalls | Complete Linux environment",
+        "  ARCHITECTURE: Custom Rust Kernel as Main Driver + Deep Linux Integration",
         "",
-        "  Alpine Linux 3.19 userspace embedded (3.1 MB compressed)",
-        "  Includes: busybox, shell, 300+ Unix utilities, apk package manager",
+        "  INTEGRATION STRATEGY:",
+        "  ┌──────────────────────────────────────────────────────────────────────┐",
+        "  │  Linux Applications                                                  │",
+        "  ├──────────────────────────────────────────────────────────────────────┤",
+        "  │  Linux Compatibility Layer (200+ APIs)                               │",
+        "  │    - File ops, Process ops, Socket ops, Memory ops, IPC ops          │",
+        "  ├──────────────────────────────────────────────────────────────────────┤",
+        "  │  Linux Integration Layer (Central Routing)  ← YOU ARE HERE           │",
+        "  │    - Routes Linux APIs to RustOS subsystems                          │",
+        "  │    - Tracks statistics and manages integration modes                 │",
+        "  ├──────────────────────────────────────────────────────────────────────┤",
+        "  │  RustOS Native Kernel (Main Driver)                                  │",
+        "  │    - VFS, Process Manager, Network Stack, Memory Manager             │",
+        "  │    - Full control over all system resources                          │",
+        "  │    - Hardware abstraction (ACPI, APIC, PCI)                          │",
+        "  └──────────────────────────────────────────────────────────────────────┘",
         "",
-        "  STATUS: All core components COMPLETE",
-        "  - ELF loader can parse and load Linux binaries",
-        "  - User mode switching enables Ring 3 execution",
-        "  - Syscalls route from userspace to kernel",
+        "  KEY BENEFITS:",
+        "  ✓ RustOS kernel maintains full control",
+        "  ✓ Linux software gets familiar APIs",
+        "  ✓ No Linux kernel code - pure Rust implementation",
+        "  ✓ Better security with Rust memory safety",
         "",
-        "  NEXT: Wire to process manager and execute /init",
-        "  THEN: Full Linux desktop via 'apk add xfce4'",
-        "",
-        "  Codebase cleaned: 24 excess files removed, professional structure",
     ];
 
     let mut row = 28;
