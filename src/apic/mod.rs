@@ -344,9 +344,11 @@ impl ApicSystem {
         let (gsi, flags) = self.resolve_irq_to_gsi(irq);
         
         // Find the appropriate IO APIC for this GSI
+        // max_redirections() returns the maximum redirection entry index (0-based)
+        // So we need to add 1 to get the count of entries
         let ioapic = self.io_apics.iter_mut()
             .find(|ioapic| gsi >= ioapic.gsi_base() && 
-                          gsi < ioapic.gsi_base() + ioapic.max_redirections() as u32)
+                          gsi <= ioapic.gsi_base() + ioapic.max_redirections() as u32)
             .ok_or("No IO APIC found for GSI")?;
 
         let local_irq = (gsi - ioapic.gsi_base()) as u8;
