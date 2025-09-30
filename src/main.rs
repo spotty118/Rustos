@@ -47,6 +47,8 @@ mod health;
 mod logging;
 // Include comprehensive testing framework
 mod testing;
+// Include experimental package management system
+mod package;
 
 // VGA_WRITER is now used via macros in print module
 
