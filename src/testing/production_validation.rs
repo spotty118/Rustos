@@ -812,11 +812,34 @@ impl ProductionValidationRunner {
         let (memory_used, memory_total) = crate::performance_monitor::memory_usage();
         let memory_utilization_percent = (memory_used as f32 / memory_total as f32) * 100.0;
         
+        // Get real I/O utilization from performance monitor if available
+        let io_utilization_percent = {
+            // Check if we have any active I/O operations
+            // For now, estimate based on syscall activity
+            let syscall_rate = crate::performance_monitor::syscall_rate();
+            // Normalize to percentage (assume 1000 syscalls/sec = 100% busy)
+            (syscall_rate as f32 / 1000.0 * 100.0).min(100.0)
+        };
+        
+        // Get real network utilization from network stack if available
+        let network_utilization_percent = {
+            use crate::net::get_network_stack;
+            if let Some(net_stack) = get_network_stack() {
+                let stats = net_stack.lock().get_statistics();
+                // Calculate utilization based on packet rate
+                // Assume 1000 packets/sec = 100% utilization
+                let packet_rate = stats.packets_sent + stats.packets_received;
+                (packet_rate as f32 / 1000.0 * 100.0).min(100.0)
+            } else {
+                0.0 // No network stack available
+            }
+        };
+        
         ResourceUtilizationReport {
             cpu_utilization_percent: crate::performance_monitor::cpu_utilization() as f32,
             memory_utilization_percent,
-            io_utilization_percent: 25.0, // Simulated
-            network_utilization_percent: 10.0, // Simulated
+            io_utilization_percent,
+            network_utilization_percent,
             peak_resource_usage: BTreeMap::new(),
         }
     }
