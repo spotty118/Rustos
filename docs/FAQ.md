@@ -1,5 +1,7 @@
 # RustOS Frequently Asked Questions (FAQ)
 
+> **Quick Answer to "Can RustOS be merged into Linux?"**: No. See [RustOS vs Linux](RUSTOS_VS_LINUX.md) for a complete explanation, or read the detailed answer below.
+
 ## General Questions
 
 ### What is RustOS?
@@ -284,3 +286,12 @@ Think of it this way:
 - **RustOS** follows the same model: independent kernel, standard interfaces, growing compatibility
 
 The path forward is **interface compatibility**, not code merging. RustOS implements standard interfaces that Linux software expects, allowing compatible programs to run without requiring the Linux kernel itself.
+
+---
+
+## Related Documentation
+
+- **[RustOS vs Linux Summary](RUSTOS_VS_LINUX.md)** - Quick reference guide to the relationship
+- **[Linux Compatibility Guide](LINUX_COMPATIBILITY.md)** - Technical details on compatibility
+- **[Architecture](ARCHITECTURE.md)** - RustOS kernel architecture
+- **[Roadmap](../ROADMAP.md)** - Development progress and plans
