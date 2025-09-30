@@ -488,6 +488,7 @@ The kernel provides comprehensive debugging capabilities:
 
 ## Documentation
 
+- **[FAQ](docs/FAQ.md)**: Frequently asked questions, including Linux compatibility
 - **[Quick Start Guide](QUICKSTART.md)**: Fast setup and basic operations
 - **[Development Roadmap](ROADMAP.md)**: Current status and future plans  
 - **[Kernel Improvements](KERNEL_IMPROVEMENTS.md)**: Detailed technical documentation
