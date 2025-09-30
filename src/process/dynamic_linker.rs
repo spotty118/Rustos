@@ -1119,3 +1119,44 @@ mod tests {
         assert_eq!(stats.loaded_libraries, 0);
     }
 }
+
+/// Global dynamic linker instance
+static mut GLOBAL_DYNAMIC_LINKER: Option<DynamicLinker> = None;
+
+/// Initialize the global dynamic linker
+pub fn init_dynamic_linker() {
+    unsafe {
+        GLOBAL_DYNAMIC_LINKER = Some(DynamicLinker::new());
+    }
+}
+
+/// Get a reference to the global dynamic linker
+pub fn get_dynamic_linker() -> Option<&'static mut DynamicLinker> {
+    unsafe {
+        GLOBAL_DYNAMIC_LINKER.as_mut()
+    }
+}
+
+/// Link a binary using the global dynamic linker
+/// 
+/// This is a convenience function that can be called from the process module
+/// to handle dynamic linking during process execution.
+/// 
+/// # Arguments
+/// * `binary_data` - The ELF binary data
+/// * `program_headers` - Program headers from the ELF
+/// * `base_address` - Base address where binary is loaded
+/// 
+/// # Returns
+/// Number of relocations applied, or error message
+pub fn link_binary_globally(
+    binary_data: &[u8],
+    program_headers: &[super::elf_loader::Elf64ProgramHeader],
+    base_address: VirtAddr,
+) -> Result<usize, &'static str> {
+    let linker = get_dynamic_linker()
+        .ok_or("Dynamic linker not initialized")?;
+    
+    linker.link_binary(binary_data, program_headers, base_address)
+        .map_err(|_| "Failed to link binary")
+}
