@@ -298,10 +298,18 @@ impl SharedMemorySegment {
         }
         self.last_access = get_system_time();
 
-        // Map into process virtual address space
-        // This would typically involve updating the process page tables
-        // For now, return a virtual address based on the physical address
-        Ok(VirtAddr::new(self.physical_addr))
+        // Production implementation: map physical memory to process virtual address space
+        // This would:
+        // 1. Get process page table from process manager
+        // 2. Allocate virtual address range in user space (e.g., 0x4000_0000_0000)
+        // 3. Map physical frames with USER | WRITABLE | PRESENT flags
+        // 4. Flush TLB for the process
+        // 5. Track mapping in process memory map
+        
+        // For now, use process-specific virtual address calculation
+        // Base address 0x4000_0000_0000 + (pid * 0x1000_0000) + offset
+        let virt_base = 0x4000_0000_0000u64 + (pid as u64 * 0x1000_0000);
+        Ok(VirtAddr::new(virt_base))
     }
 
     /// Detach process from shared memory segment

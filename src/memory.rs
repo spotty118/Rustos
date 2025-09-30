@@ -993,8 +993,15 @@ impl SwapManager {
                     return Err("Storage write failed during swap out");
                 }
             }
+        } else {
+            // Production implementation: swap device should be configured
+            // Without swap device, pages cannot be swapped to disk
+            // This is a critical error in production - system should:
+            // 1. Log warning about missing swap device
+            // 2. Attempt to reclaim memory through other means
+            // 3. Consider OOM (Out of Memory) handling
+            return Err("No swap device configured");
         }
-        // If no swap device configured, data is lost (memory-only swap simulation)
 
         self.swap_entries.insert(slot, entry);
         Ok(slot)
