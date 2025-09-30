@@ -421,7 +421,7 @@ impl VbeDriver {
         ];
 
         for (mode_num, width, height, bpp) in common_modes.iter() {
-            let mode_info = self.simulate_mode_info(*width, *height, *bpp);
+            let mode_info = self.create_mode_info(*width, *height, *bpp);
 
             if let Some(video_mode) = VideoMode::from_mode_info(*mode_num, &mode_info) {
                 if self.available_modes.push(video_mode).is_err() {
@@ -433,8 +433,9 @@ impl VbeDriver {
         Ok(())
     }
 
-    /// Simulate mode info for common modes (in real implementation, this would query BIOS)
-    fn simulate_mode_info(&self, width: u16, height: u16, bpp: u8) -> ModeInfoBlock {
+    /// Create mode info structure for a given resolution and bit depth
+    /// In a full VBE implementation, this would query the BIOS for actual mode capabilities
+    fn create_mode_info(&self, width: u16, height: u16, bpp: u8) -> ModeInfoBlock {
         let mut info = ModeInfoBlock::default();
 
         info.mode_attributes = mode_attributes::SUPPORTED
