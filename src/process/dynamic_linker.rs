@@ -44,6 +44,9 @@ pub struct DynamicLinker {
     /// Global symbol table mapping symbol names to addresses
     symbol_table: BTreeMap<String, VirtAddr>,
     
+    /// Symbol table by index for current binary (used during relocation)
+    symbol_index_table: Vec<(String, VirtAddr)>,
+    
     /// Base address for library loading (managed with ASLR)
     next_base_address: VirtAddr,
 }
@@ -297,6 +300,7 @@ impl DynamicLinker {
             search_paths,
             loaded_libraries: BTreeMap::new(),
             symbol_table: BTreeMap::new(),
+            symbol_index_table: Vec::new(),
             // Start library loading at a safe address (above user space)
             next_base_address: VirtAddr::new(0x400000_0000),
         }
@@ -547,32 +551,51 @@ impl DynamicLinker {
                 }
                 relocation_types::R_X86_64_GLOB_DAT => {
                     // Symbol value: S
-                    // Need to look up symbol by index and write its address
                     let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
                     
-                    // TODO: Look up symbol value from symbol table using reloc.symbol index
-                    // For now, we'll skip this as it requires symbol table indexing
-                    // In a full implementation:
-                    // let symbol_value = self.lookup_symbol_by_index(reloc.symbol)?;
-                    // unsafe { self.write_relocation_value(target, symbol_value)?; }
+                    // Resolve symbol by index
+                    if let Some(symbol_addr) = self.resolve_symbol_by_index(reloc.symbol) {
+                        unsafe {
+                            self.write_relocation_value(target, symbol_addr.as_u64())?;
+                        }
+                    } else {
+                        // Symbol not found - this is a fatal error for GLOB_DAT
+                        return Err(DynamicLinkerError::SymbolNotFound(
+                            format!("symbol index {}", reloc.symbol)
+                        ));
+                    }
                 }
                 relocation_types::R_X86_64_JUMP_SLOT => {
                     // PLT entry: S
-                    // Similar to GLOB_DAT but for PLT
                     let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
                     
-                    // TODO: Look up symbol and write to PLT slot
-                    // For lazy binding, we could write the address of the resolver stub
-                    // For now, skip until we have full symbol resolution
+                    // Resolve symbol by index
+                    if let Some(symbol_addr) = self.resolve_symbol_by_index(reloc.symbol) {
+                        // For eager binding, write symbol address directly
+                        unsafe {
+                            self.write_relocation_value(target, symbol_addr.as_u64())?;
+                        }
+                    } else {
+                        // For lazy binding, we could write resolver stub address here
+                        // For now, leave it unresolved (will be resolved on first call)
+                        // This is optional - we could also error out like GLOB_DAT
+                    }
                 }
                 relocation_types::R_X86_64_64 => {
                     // Direct 64-bit: S + A
                     let target = VirtAddr::new(base_address.as_u64() + reloc.offset.as_u64());
                     
-                    // TODO: Look up symbol value and add addend
-                    // let symbol_value = self.lookup_symbol_by_index(reloc.symbol)?;
-                    // let value = symbol_value + reloc.addend as u64;
-                    // unsafe { self.write_relocation_value(target, value)?; }
+                    // Resolve symbol and add addend
+                    if let Some(symbol_addr) = self.resolve_symbol_by_index(reloc.symbol) {
+                        let value = symbol_addr.as_u64() + reloc.addend as u64;
+                        unsafe {
+                            self.write_relocation_value(target, value)?;
+                        }
+                    } else {
+                        return Err(DynamicLinkerError::SymbolNotFound(
+                            format!("symbol index {}", reloc.symbol)
+                        ));
+                    }
                 }
                 _ => {
                     // Unsupported relocation type
@@ -782,29 +805,115 @@ impl DynamicLinker {
         Ok(symbols)
     }
     
-    /// Load symbols into global symbol table
+    /// Load symbols into global symbol table and index table
     pub fn load_symbols_from_binary(
         &mut self,
         binary_data: &[u8],
         dynamic_info: &DynamicInfo,
         base_address: VirtAddr,
     ) -> DynamicLinkerResult<usize> {
-        let symbols = self.parse_symbol_table(binary_data, dynamic_info)?;
-        let count = symbols.len();
+        // First, build the complete symbol table with indices
+        self.build_symbol_index_table(binary_data, dynamic_info, base_address)?;
         
-        for (name, value, symbol) in symbols {
-            // Adjust symbol value by base address if needed
-            let adjusted_addr = if symbol.symbol_type() == symbol_type::STT_FUNC ||
-                                   symbol.symbol_type() == symbol_type::STT_OBJECT {
-                VirtAddr::new(base_address.as_u64() + value.as_u64())
-            } else {
-                value
-            };
-            
-            self.add_symbol(name, adjusted_addr);
+        // Then add defined symbols to global symbol table
+        let count = self.symbol_index_table.len();
+        
+        for (name, addr) in &self.symbol_index_table {
+            if !name.is_empty() {
+                self.add_symbol(name.clone(), *addr);
+            }
         }
         
         Ok(count)
+    }
+    
+    /// Build symbol index table from binary
+    /// 
+    /// This creates a complete mapping of symbol indices to (name, address) pairs,
+    /// including undefined symbols (which will have address 0).
+    fn build_symbol_index_table(
+        &mut self,
+        binary_data: &[u8],
+        dynamic_info: &DynamicInfo,
+        base_address: VirtAddr,
+    ) -> DynamicLinkerResult<()> {
+        let symtab_addr = dynamic_info.symtab
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No symbol table")))?;
+        let strtab_addr = dynamic_info.strtab
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table")))?;
+        let strtab_size = dynamic_info.strsz
+            .ok_or(DynamicLinkerError::InvalidElf(String::from("No string table size")))?;
+        
+        let symtab_offset = symtab_addr.as_u64() as usize;
+        let strtab_offset = strtab_addr.as_u64() as usize;
+        
+        if strtab_offset + strtab_size > binary_data.len() {
+            return Err(DynamicLinkerError::InvalidElf(
+                String::from("String table out of bounds")
+            ));
+        }
+        
+        let strtab = &binary_data[strtab_offset..strtab_offset + strtab_size];
+        
+        // Calculate number of symbols
+        let sym_count = if strtab_offset > symtab_offset {
+            (strtab_offset - symtab_offset) / core::mem::size_of::<Elf64Symbol>()
+        } else {
+            100 // Conservative estimate
+        };
+        
+        // Clear and rebuild index table
+        self.symbol_index_table.clear();
+        
+        for i in 0..sym_count {
+            let sym_offset = symtab_offset + i * core::mem::size_of::<Elf64Symbol>();
+            
+            if sym_offset + core::mem::size_of::<Elf64Symbol>() > binary_data.len() {
+                break;
+            }
+            
+            // Parse symbol entry
+            let symbol = unsafe {
+                core::ptr::read(binary_data[sym_offset..].as_ptr() as *const Elf64Symbol)
+            };
+            
+            // Get symbol name
+            let name = self.read_string_from_table(strtab, symbol.st_name as usize)
+                .unwrap_or_else(|| String::new());
+            
+            // Calculate address (0 for undefined symbols)
+            let addr = if symbol.is_defined() {
+                if symbol.symbol_type() == symbol_type::STT_FUNC ||
+                   symbol.symbol_type() == symbol_type::STT_OBJECT {
+                    VirtAddr::new(base_address.as_u64() + symbol.st_value)
+                } else {
+                    VirtAddr::new(symbol.st_value)
+                }
+            } else {
+                VirtAddr::new(0) // Undefined - will need to be resolved from other libraries
+            };
+            
+            self.symbol_index_table.push((name, addr));
+        }
+        
+        Ok(())
+    }
+    
+    /// Resolve symbol by index (used during relocation)
+    pub fn resolve_symbol_by_index(&self, index: u32) -> Option<VirtAddr> {
+        let idx = index as usize;
+        if idx < self.symbol_index_table.len() {
+            let (_name, addr) = &self.symbol_index_table[idx];
+            if addr.as_u64() != 0 {
+                Some(*addr)
+            } else {
+                // Symbol is undefined in current binary, try global symbol table
+                let (name, _) = &self.symbol_index_table[idx];
+                self.resolve_symbol(name)
+            }
+        } else {
+            None
+        }
     }
     
     /// Parse relocations from RELA section
@@ -977,5 +1086,36 @@ mod tests {
         let linker = DynamicLinker::new();
         assert!(!linker.is_loaded("libc.so.6"));
         assert_eq!(linker.loaded_libraries().len(), 0);
+    }
+    
+    #[test]
+    fn test_symbol_index_resolution() {
+        let mut linker = DynamicLinker::new();
+        
+        // Manually populate symbol index table for testing
+        linker.symbol_index_table.push((String::from("sym1"), VirtAddr::new(0x1000)));
+        linker.symbol_index_table.push((String::from("sym2"), VirtAddr::new(0x2000)));
+        linker.symbol_index_table.push((String::from(""), VirtAddr::new(0))); // Undefined
+        
+        // Test defined symbols
+        assert_eq!(linker.resolve_symbol_by_index(0), Some(VirtAddr::new(0x1000)));
+        assert_eq!(linker.resolve_symbol_by_index(1), Some(VirtAddr::new(0x2000)));
+        
+        // Test undefined symbol (should return None unless in global table)
+        assert_eq!(linker.resolve_symbol_by_index(2), None);
+        
+        // Test out of bounds
+        assert_eq!(linker.resolve_symbol_by_index(99), None);
+    }
+    
+    #[test]
+    fn test_linker_stats() {
+        let mut linker = DynamicLinker::new();
+        linker.add_symbol(String::from("test"), VirtAddr::new(0x1000));
+        
+        let stats = linker.get_stats();
+        assert_eq!(stats.search_paths, 5);
+        assert_eq!(stats.global_symbols, 1);
+        assert_eq!(stats.loaded_libraries, 0);
     }
 }
