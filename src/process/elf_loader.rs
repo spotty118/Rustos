@@ -157,6 +157,10 @@ pub struct LoadedBinary {
     pub stack_top: VirtAddr,
     pub code_regions: Vec<VirtualMemoryRegion>,
     pub data_regions: Vec<VirtualMemoryRegion>,
+    /// Whether this binary requires dynamic linking
+    pub is_dynamic: bool,
+    /// Program headers (needed for dynamic linking)
+    pub program_headers: Vec<Elf64ProgramHeader>,
 }
 
 /// ELF64 Binary Loader
@@ -503,6 +507,11 @@ impl ElfLoader {
             return Err(ElfLoaderError::InvalidEntryPoint);
         }
 
+        // Check if binary requires dynamic linking
+        let is_dynamic = program_headers.iter()
+            .any(|phdr| phdr.p_type == elf_constants::PT_DYNAMIC || 
+                        phdr.p_type == elf_constants::PT_INTERP);
+
         Ok(LoadedBinary {
             base_address,
             entry_point,
@@ -510,6 +519,8 @@ impl ElfLoader {
             stack_top,
             code_regions,
             data_regions,
+            is_dynamic,
+            program_headers,
         })
     }
 }

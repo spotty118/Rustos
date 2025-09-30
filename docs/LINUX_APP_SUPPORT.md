@@ -1,5 +1,7 @@
 # Linux Application Support - Technical Requirements
 
+> **📊 Implementation Status**: See [LINUX_APP_PROGRESS.md](LINUX_APP_PROGRESS.md) for current implementation progress and completed features.
+
 ## Executive Summary
 
 **Question**: Can RustOS run Linux applications like .deb packages?
@@ -591,9 +593,11 @@ The technical foundation is solid. The remaining work is well-understood and ach
 
 ## Related Documentation
 
+- **[LINUX_APP_PROGRESS.md](LINUX_APP_PROGRESS.md)** - **Current implementation progress and status** ⭐
 - [LINUX_COMPATIBILITY.md](LINUX_COMPATIBILITY.md) - Current compatibility status
 - [FAQ.md](FAQ.md) - Frequently asked questions
 - [ARCHITECTURE.md](ARCHITECTURE.md) - RustOS technical architecture
 - [ROADMAP.md](../ROADMAP.md) - Development roadmap
+- [examples/dynamic_linker_demo.rs](../examples/dynamic_linker_demo.rs) - Dynamic linker usage examples
 
 For questions or contributions, see [How to Contribute](LINUX_COMPATIBILITY.md#how-to-contribute).
