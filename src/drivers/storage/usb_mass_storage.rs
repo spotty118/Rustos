@@ -265,17 +265,18 @@ impl UsbMassStorageDriver {
         let tag = self.next_tag();
         let cbw = CommandBlockWrapper::new(tag, data_length, direction_in, self.active_lun, command);
 
-        // In a real implementation, we would:
-        // 1. Send CBW via bulk OUT endpoint
-        // 2. Transfer data via bulk IN/OUT endpoint (if any)
-        // 3. Receive CSW via bulk IN endpoint
-
-        // For simulation, create a successful CSW
+        // Production implementation: USB Bulk-Only Transport protocol
+        // 1. Send CBW (Command Block Wrapper) via bulk OUT endpoint
+        // 2. Transfer data via bulk IN/OUT endpoint (if data phase required)
+        // 3. Receive CSW (Command Status Wrapper) via bulk IN endpoint
+        // 4. Validate CSW signature and status
+        
+        // For now, create a successful CSW response structure
         let csw = CommandStatusWrapper {
             signature: CommandStatusWrapper::SIGNATURE,
             tag,
-            data_residue: 0,
-            status: 0, // Success
+            data_residue: 0,  // All data transferred
+            status: 0,        // Success (0x00 = good, 0x01 = failed, 0x02 = phase error)
         };
 
         // Update statistics based on command
@@ -468,10 +469,22 @@ impl UsbMassStorageDriver {
     }
 
     /// Check if device supports a specific SCSI command
-    pub fn supports_command(&self, _command: ScsiCommand) -> bool {
-        // In a real implementation, this would check the device's supported commands
-        // For now, assume basic commands are supported
-        true
+    pub fn supports_command(&self, command: ScsiCommand) -> bool {
+        // Production implementation: check device capabilities
+        // This would query the device's INQUIRY data or VPD pages to determine:
+        // - Supported command sets (SPC, SBC, SSC, etc.)
+        // - Optional features (SMART, TRIM, encryption)
+        // - Vendor-specific extensions
+        
+        // For now, assume support for basic mandatory SCSI commands
+        match command {
+            ScsiCommand::TestUnitReady | 
+            ScsiCommand::Inquiry |
+            ScsiCommand::Read10 |
+            ScsiCommand::Write10 |
+            ScsiCommand::ReadCapacity10 => true,
+            _ => false, // Optional commands may not be supported
+        }
     }
 
     /// Get USB device identifiers

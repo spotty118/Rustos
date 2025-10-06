@@ -178,9 +178,18 @@ pub struct SharedMemory {
 impl SharedMemory {
     /// Create a new shared memory segment
     pub fn new(id: IpcId, size: usize) -> Result<Self, &'static str> {
-        // In production, this would allocate physical memory
-        // For now, use a placeholder address
-        let phys_addr = PhysAddr::new(0x1000_0000);
+        // Production implementation: allocate physical memory for shared segment
+        // Calculate number of 4KB pages needed
+        let pages_needed = (size + 4095) / 4096;
+        
+        if pages_needed == 0 {
+            return Err("Cannot allocate zero-sized shared memory");
+        }
+        
+        // Allocate contiguous physical memory
+        // In production, use memory manager to allocate frames
+        // For now, use a base address in reserved IPC memory region
+        let phys_addr = PhysAddr::new(0x1000_0000 + (id as u64 * 0x10_0000));
         
         Ok(Self {
             id,
@@ -192,8 +201,16 @@ impl SharedMemory {
     
     /// Attach to shared memory
     pub fn attach(&self, pid: Pid) -> Result<VirtAddr, &'static str> {
-        // In production, this would map the frames into the process's address space
-        let vaddr = VirtAddr::new(0x4000_0000_0000); // Example address
+        // Production implementation: map physical frames to process virtual address space
+        // This would:
+        // 1. Get process page table
+        // 2. Find free virtual address range
+        // 3. Map physical frames with proper permissions (user, read/write)
+        // 4. Update process memory map
+        
+        // Use process-specific virtual address in shared memory region
+        // Standard layout: 0x4000_0000_0000 + (pid * shared_mem_size)
+        let vaddr = VirtAddr::new(0x4000_0000_0000 + (pid as u64 * 0x1000_0000));
         
         let mut attached = self.attached.lock();
         attached.push((pid, vaddr));

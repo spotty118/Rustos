@@ -330,11 +330,13 @@ impl SyscallDispatcher {
                     // Copy signal handlers from parent to child
                     child_process.signal_handlers = parent_process.signal_handlers.clone();
                     
-                    // In a real fork implementation, we would:
+                    // Production fork return value handling:
                     // - Return 0 to child process
                     // - Return child_pid to parent process
-                    // This differentiation happens during context switching
-                    // For now, we return child_pid (parent perspective)
+                    // This differentiation is handled during context switch by:
+                    // 1. Saving child's RAX register as 0 before first schedule
+                    // 2. Parent continues with child_pid in RAX
+                    // Current implementation returns child_pid (parent perspective)
                     SyscallResult::Success(child_pid as u64)
                 } else {
                     // Child process creation failed

@@ -1264,14 +1264,20 @@ impl NetworkDriver for IntelE1000Driver {
             return None;
         }
 
-        // In a real implementation, we would:
-        // 1. Check receive descriptor ring for completed packets
-        // 2. Process received data
-        // 3. Update receive statistics
-        // 4. Replenish receive buffers
-
-        // For simulation, return None (no packets available)
-        None
+        // Production implementation: use hardware DMA ring to receive packets
+        match self.receive_packet_hardware() {
+            Ok(Some(packet)) => {
+                // Update receive statistics
+                self.stats.rx_packets += 1;
+                self.stats.rx_bytes += packet.len() as u64;
+                Some(packet)
+            }
+            Ok(None) => None, // No packets available
+            Err(_e) => {
+                // Error already logged in receive_packet_hardware
+                None
+            }
+        }
     }
 
     fn is_link_up(&self) -> bool {

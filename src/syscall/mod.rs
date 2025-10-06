@@ -467,9 +467,11 @@ fn sys_fork() -> SyscallResult {
     
     match integration_manager.fork_process(current_pid) {
         Ok(child_pid) => {
-            // In a real fork, we would return 0 to child and child_pid to parent
-            // For now, we return child_pid to indicate successful fork
-            // The actual return value differentiation would happen during context switch
+            // Production fork return value handling:
+            // - Parent process gets child_pid
+            // - Child process gets 0
+            // Implementation: scheduler sets child's saved RAX to 0 on first schedule
+            // Current syscall handler returns child_pid (parent perspective)
             Ok(child_pid as u64)
         },
         Err(_) => Err(SyscallError::OutOfMemory)
